@@ -1,0 +1,3 @@
+/usr/local/hoomd/hoomd-1.3.2-install/lib/hoomd/python-module/hoomd_plugins/PSEv1/_PSEv1.so
+/usr/local/hoomd/hoomd-1.3.2-install/lib/hoomd/python-module/hoomd_plugins/PSEv1/__init__.py
+/usr/local/hoomd/hoomd-1.3.2-install/lib/hoomd/python-module/hoomd_plugins/PSEv1/integrate.py
