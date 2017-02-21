@@ -1,10 +1,23 @@
-Files that come in this template:
+# Positively Split Ewald (PSE)
+PSE is a HOOMD plugin by Andrew Fiore containing a GPU implemention of the Positively Split Ewald
+(PSE) algorithm for calculation of the Rotne-Prager-Yamakawa (RPY)
+hydrodynamic mobility and stochastic thermal displacements. 
+ 
+The theory behind the PSE method is described in the reference:
+1. **Rapid Sampling of Stochastic Displacements in Brownian Dynamics
+Simulations**, Andrew M. Fiore, Florencio Balboa Usabiaga, Aleksandar
+Donev, and James W. Swan, 2016. [arXiv](https://arxiv.org/abs/1611.09322)
+
+
+## Files that come in this template
  - CMakeLists.txt   : main CMake configuration file for the plugin
  - FindHOOMD.cmake  : script to find a HOOMD-Blue installation to link against
  - README           : This file
  - cppmodule        : Directory containing C++ and CUDA source code that interacts with HOOMD
  - pymodule         : Directory containing python UI level source code that drives the C++ module
  
+
+## Compilation
 To compile this example plugin, follow steps similar to those in compiling HOOMD-Blue. The process of finding a HOOMD 
 installation to link to will be fully automatic IF you have hoomd_install_dir/bin in your PATH when running ccmake.
 
