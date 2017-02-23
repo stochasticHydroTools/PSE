@@ -19,6 +19,13 @@ Donev, and James W. Swan, 2016. [arXiv](https://arxiv.org/abs/1611.09322)
  - pymodule         : Directory containing python UI level source code that drives the C++ module
  
 
+## Software requirements
+
+The PSE plugin requires the following additional software:
+ - HOOMD, compiled with CUDA (tested with version 1.3.2). 
+ - CUDA (tested with version 7.5).
+ - LAPACKE (tested with version 3.6.1).
+
 ## Compilation
 To compile this example plugin, follow steps similar to those in compiling HOOMD-Blue. The process of finding a HOOMD 
 installation to link to will be fully automatic IF you have hoomd_install_dir/bin in your PATH when running ccmake.
