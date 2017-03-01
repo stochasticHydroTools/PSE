@@ -17,7 +17,7 @@ Donev, and James W. Swan, 2016. [arXiv](https://arxiv.org/abs/1611.09322)
  - README           : This file
  - cppmodule        : Directory containing C++ and CUDA source code that interacts with HOOMD
  - pymodule         : Directory containing python UI level source code that drives the C++ module
- 
+ - examples/run.py  : python example to use PSE.
 
 ## Software requirements
 
