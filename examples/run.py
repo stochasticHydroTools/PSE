@@ -6,12 +6,12 @@ import os
 
 #Simulation parameters
 dt = 1e-4    # time step size
-nsteps = 1E4 # number of time steps
+nsteps = 1E3 # number of time steps
 T=1          # temperature
 radius = 1.0 # particle radius
 
 # Read in system
-system = init.read_xml( 'in.xml' )
+system = init.create_random(N=32000, phi_p=0.10, min_dist=0.90)
 
 # Output directory
 if ( not os.path.isdir( 'data' ) ):
@@ -38,8 +38,8 @@ print '\n\n\n Before PSEv1'
 PSEv1.integrate.PSEv1(group=all, seed = 0, T = 1.0, xi = 0.5, error = 10**(-3.0))
 
 # Trajectory output
-dcd = dump.dcd(filename='data/motion.dcd',period=1000,overwrite=True)
-xml = dump.xml(filename='data/particles',period = 1000)
+dcd = dump.dcd(filename='data/motion.dcd',period = 200, overwrite=True)
+xml = dump.xml(filename='data/particles',period = 200)
 
 # Stress output
 compute.thermo(group=all)

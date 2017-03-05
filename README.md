@@ -25,18 +25,20 @@ The PSE plugin requires the following additional software:
  - HOOMD, compiled with CUDA (tested with version 1.3.2). 
  - CUDA (tested with version 7.5).
  - LAPACKE (tested with version 3.6.1).
+ - CBLAS (tested with version 3.6.1).
 
 ## Compilation
 To compile this example plugin, follow steps similar to those in compiling HOOMD-Blue. The process of finding a HOOMD 
-installation to link to will be fully automatic IF you have hoomd_install_dir/bin in your PATH when running ccmake.
+installation to link to will be fully automatic IF you have hoomd_install_dir/bin in your PATH when running cmake.
 
 Note that plugins can only be built against a hoomd build that has been installed via a package or compiled and then
 installed via 'make install'. Plugins can only be built against hoomd when it is built as a shared library.
+From the root PSE folder do: 
 
 ```
 $ mkdir plugin_build
 $ cd plugin_build
-$ ccmake /path/to/plugin_template_cpp 
+$ cmake ../ 
 (follow normal cmake steps)
 $ make -j6
 $ make install
@@ -44,9 +46,22 @@ $ make install
 
 If hoomd is not in your PATH, you can specify the root using
 
-`$ ccmake /path/to/plugin_template -DHOOMD_ROOT=/path/to/hoomd`
+`$ cmake -DHOOMD_ROOT=/path/to/hoomd ../`
 
 where `${HOOMD_ROOT}/bin/hoomd` is where the hoomd executable is installed
+You can also provide to `cmake`  the location of `LAPACKE`, `LAPACK`, `CBLAS`,
+`BLAS` and the `python` version with the options
+
+```
+$ cmake -DHOOMD_ROOT=/path/to/hoomd  \
+-DCBLAS_LIBRARIES=/path/to/cblas     \
+-DBLAS_LIBRARIES=/path/to/blas       \
+-DLAPACKE_LIBRARIES=/path/to/lapacke \
+-DLAPACK_LIBRARIES=/path/to/lapack   \
+-DPYTHON_EXECUTABLE=`which python`   \
+../
+```
+
 
 By default, make install will install the plugin into
 
@@ -60,10 +75,10 @@ variable `HOOMD_PLUGINS_DIR` in your `.bash_profile`, as an example
 
 `export HOOMD_PLUGINS_DIR=${HOME}/hoomd_plugins`  
 
-When running ccmake, add `-DHOOMD_PLUGINS_DIR=${HOOMD_PLUGINS_DIR}`
+When running cmake, add `-DHOOMD_PLUGINS_DIR=${HOOMD_PLUGINS_DIR}`
 to the options, that is it
 
- `ccmake /path/to/plugin_template_cpp
+ `cmake /path/to/plugin_template_cpp
  -DHOOMD_PLUGINS_DIR=${HOOMD_PLUGINS_DIR}`
 
 Now, `make install` will install the plugins into `${HOOMD_PLUGINS_DIR}` and hoomd, when launched, will look there
