@@ -11,7 +11,11 @@ T=1          # temperature
 radius = 1.0 # particle radius
 
 # Read in system
-system = init.create_random(N=32000, phi_p=0.10, min_dist=0.90)
+# In init.create_random, volume fraction assumes unit diameter, 
+#     but the plugin assumes unit radius, so divide desired 
+#     volume fraction by 8
+phi = 0.10/8.0
+system = init.create_random(N=32000, phi_p=phi, min_dist=0.90)
 
 # Set radius to 1
 for p in system.particles:
