@@ -7,7 +7,8 @@ The theory behind the PSE method is described in the reference:
 
 1. **Rapid Sampling of Stochastic Displacements in Brownian Dynamics
 Simulations**, Andrew M. Fiore, Florencio Balboa Usabiaga, Aleksandar
-Donev, and James W. Swan, 2016. [arXiv](https://arxiv.org/abs/1611.09322)
+Donev, and James W. Swan, The Journal of Chemical Physics, **146**,
+124116 (2017).[DOI](http://doi.org/10.1063/1.4978242)[arXiv](https://arxiv.org/abs/1611.09322)
 
 
 ## Files that come in this template
