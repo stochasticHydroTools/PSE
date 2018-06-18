@@ -150,7 +150,6 @@ void gpu_stokes_Spread_kernel( 	Scalar4 *d_pos,
 	
 	int group_idx = blockIdx.x;
 	int thread_offset = threadIdx.z + threadIdx.y * blockDim.z + threadIdx.x * blockDim.z*blockDim.y;
-	//int block_size = blockDim.x * blockDim.y * blockDim.z;
 	
 	// Global particle ID
 	unsigned int idx = d_group_members[group_idx];
@@ -184,45 +183,67 @@ void gpu_stokes_Spread_kernel( 	Scalar4 *d_pos,
 	pos_frac.y *= (Scalar)Ny;
 	pos_frac.z *= (Scalar)Nz;
 	
+	// Grid index of floor of fractional position
 	int x = int( pos_frac.x );
 	int y = int( pos_frac.y );
 	int z = int( pos_frac.z );
-	//x = ( pos_frac.x - float(x) < 0.5 ) ? x : x + 1;
-	//y = ( pos_frac.y - float(y) < 0.5 ) ? y : y + 1;
-	//z = ( pos_frac.z - float(z) < 0.5 ) ? z : z + 1;
- 
-	// Grid point associated with current thread
-	int Pd2 = floorf( P / 2 );
-	//int x_inp = x + threadIdx.x - Pd2;
-	//int y_inp = y + threadIdx.y - Pd2;
-	//int z_inp = z + threadIdx.z - Pd2;
-	int x_inp = x + threadIdx.x - Pd2 + 1 - (P % 2) * ( pos_frac.x - Scalar( x ) < 0.5  );
-	int y_inp = y + threadIdx.y - Pd2 + 1 - (P % 2) * ( pos_frac.y - Scalar( y ) < 0.5  );
-	int z_inp = z + threadIdx.z - Pd2 + 1 - (P % 2) * ( pos_frac.z - Scalar( z ) < 0.5  );
 
-	x_inp = (x_inp<0) ? x_inp+Nx : ( (x_inp>Nx-1) ? x_inp-Nx : x_inp );
-	y_inp = (y_inp<0) ? y_inp+Ny : ( (y_inp>Ny-1) ? y_inp-Ny : y_inp );
-	z_inp = (z_inp<0) ? z_inp+Nz : ( (z_inp>Nz-1) ? z_inp-Nz : z_inp );
-	
-	Scalar3 pos_grid;
-	pos_grid.x = gridh.x*x_inp - Ld2.x;
-	pos_grid.y = gridh.y*y_inp - Ld2.y;
-	pos_grid.z = gridh.z*z_inp - Ld2.z;
-	
-	int grid_idx = x_inp * Ny * Nz + y_inp * Nz + z_inp;
-	
-	// Distance from particle to grid node
-	Scalar3 r = pos_grid - pos;
-	r = box.minImage(r);
-	Scalar rsq = r.x*r.x + r.y*r.y + r.z*r.z;
-	
-	// Magnitude of the force contribution to the current grid node
-	Scalar3 force_inp = prefac * expf( -expfac * rsq ) * force;
-	
-	// Add force to the grid
-	atomicAdd( &(gridX[grid_idx].x), force_inp.x);
-	atomicAdd( &(gridY[grid_idx].x), force_inp.y);
-	atomicAdd( &(gridZ[grid_idx].x), force_inp.z);
+	// Amount of work needed for each thread to cover support
+	int3 n, t;
+        n.x = ( P + blockDim.x - 1 ) / blockDim.x; // ceiling
+        n.y = ( P + blockDim.y - 1 ) / blockDim.y;
+        n.z = ( P + blockDim.z - 1 ) / blockDim.z;
+
+	// Grid point associated with current thread
+	int Pd2 = P/2; // integer division does floor
+
+	for ( int ii = 0; ii < n.x; ++ii ){
+
+		t.x = threadIdx.x + ii*blockDim.x;
+
+		for ( int jj = 0; jj < n.y; ++jj ){
+
+			t.y = threadIdx.y + jj*blockDim.y;
+
+			for ( int kk = 0; kk < n.z; ++kk ){
+
+				t.z = threadIdx.z + kk*blockDim.z;
+
+				if ( ( t.x < P ) && ( t.y < P ) && ( t.z < P ) ){
+
+					int x_inp = x + t.x - Pd2 + 1 - (P % 2) * ( pos_frac.x - Scalar( x ) < 0.5  );
+					int y_inp = y + t.y - Pd2 + 1 - (P % 2) * ( pos_frac.y - Scalar( y ) < 0.5  );
+					int z_inp = z + t.z - Pd2 + 1 - (P % 2) * ( pos_frac.z - Scalar( z ) < 0.5  );
+
+					x_inp = (x_inp<0) ? x_inp+Nx : ( (x_inp>Nx-1) ? x_inp-Nx : x_inp );
+					y_inp = (y_inp<0) ? y_inp+Ny : ( (y_inp>Ny-1) ? y_inp-Ny : y_inp );
+					z_inp = (z_inp<0) ? z_inp+Nz : ( (z_inp>Nz-1) ? z_inp-Nz : z_inp );
+					
+					Scalar3 pos_grid;
+					pos_grid.x = gridh.x*x_inp - Ld2.x;
+					pos_grid.y = gridh.y*y_inp - Ld2.y;
+					pos_grid.z = gridh.z*z_inp - Ld2.z;
+
+					pos_grid.x = pos_grid.x + box.getTiltFactorXY() * pos_grid.y; // shear lattic position
+					
+					int grid_idx = x_inp * Ny * Nz + y_inp * Nz + z_inp;
+					
+					// Distance from particle to grid node
+					Scalar3 r = pos_grid - pos;
+					r = box.minImage(r);
+					Scalar rsq = r.x*r.x + r.y*r.y + r.z*r.z;
+					
+					// Magnitude of the force contribution to the current grid node
+					Scalar3 force_inp = prefac * expf( -expfac * rsq ) * force;
+					
+					// Add force to the grid
+					atomicAdd( &(gridX[grid_idx].x), force_inp.x);
+					atomicAdd( &(gridY[grid_idx].x), force_inp.y);
+					atomicAdd( &(gridZ[grid_idx].x), force_inp.z);
+				}
+			}//kk
+		}//jj
+	}//ii
 
 }
 
@@ -304,14 +325,10 @@ void gpu_stokes_Contract_kernel( 	Scalar4 *d_pos,
 				 	Scalar prefac,
 				 	Scalar expfac ){
 
-	//__shared__ float3 shared[10*10*10 + 1 ]; // 16 kb max
-	//float3 *velocity = shared;
-	//float3 *pos_shared = &shared[10*10*10];
-	
 	extern __shared__ float3 shared[];
 	
 	float3 *velocity = shared;
-	float3 *pos_shared = &shared[P*P*P];
+	float3 *pos_shared = &shared[blockDim.x*blockDim.y*blockDim.z];
 	
 	int group_idx = blockIdx.x;
 	int thread_offset = threadIdx.z + threadIdx.y * blockDim.z + threadIdx.x * blockDim.z*blockDim.y;
@@ -345,43 +362,61 @@ void gpu_stokes_Contract_kernel( 	Scalar4 *d_pos,
 	int x = int( pos_frac.x );
 	int y = int( pos_frac.y );
 	int z = int( pos_frac.z );
-	//x = ( pos_frac.x - float(x) < 0.5 ) ? x : x + 1;
-	//y = ( pos_frac.y - float(y) < 0.5 ) ? y : y + 1;
-	//z = ( pos_frac.z - float(z) < 0.5 ) ? z : z + 1;
-	 
+	
+	int3 n, t;
+        n.x = ( P + blockDim.x - 1 ) / blockDim.x; // ceiling
+        n.y = ( P + blockDim.y - 1 ) / blockDim.y;
+        n.z = ( P + blockDim.z - 1 ) / blockDim.z;
+ 
 	// Grid point associated with current thread
 	int Pd2 = P / 2; // integer division does floor
-	//int x_inp = x + threadIdx.x - Pd2;
-	//int y_inp = y + threadIdx.y - Pd2;
-	//int z_inp = z + threadIdx.z - Pd2;
-	int x_inp = x + threadIdx.x - Pd2 + 1 - (P % 2) * ( pos_frac.x - Scalar( x ) < 0.5  );
-	int y_inp = y + threadIdx.y - Pd2 + 1 - (P % 2) * ( pos_frac.y - Scalar( y ) < 0.5  );
-	int z_inp = z + threadIdx.z - Pd2 + 1 - (P % 2) * ( pos_frac.z - Scalar( z ) < 0.5  );
 	
-	x_inp = (x_inp<0) ? x_inp+Nx : ( (x_inp>Nx-1) ? x_inp-Nx : x_inp );
-	y_inp = (y_inp<0) ? y_inp+Ny : ( (y_inp>Ny-1) ? y_inp-Ny : y_inp );
-	z_inp = (z_inp<0) ? z_inp+Nz : ( (z_inp>Nz-1) ? z_inp-Nz : z_inp );
-	
-	Scalar3 pos_grid = make_scalar3( gridh.x*x_inp - Ld2.x, gridh.y*y_inp - Ld2.y, gridh.z*z_inp - Ld2.z );
-	
-	int grid_idx = x_inp * Ny * Nz + y_inp * Nz + z_inp;
-	
-	// Distance from particle to grid node
-	Scalar3 r = pos_grid - pos;
-	r = box.minImage(r);
-	Scalar rsq = r.x*r.x + r.y*r.y + r.z*r.z;
-	
-	// Spreading Factor
-	Scalar Sfac = prefac * expf( -expfac * rsq );
-	
-	// Get velocity from reduction
-	//velocity[thread_offset].x = Sfac * gridX[grid_idx].x;
-	//velocity[thread_offset].y = Sfac * gridY[grid_idx].x;
-	//velocity[thread_offset].z = Sfac * gridZ[grid_idx].x;
-	
-	// THIS IS THE SLOW STEP:
-	velocity[thread_offset] = Sfac * make_scalar3( gridX[grid_idx].x, gridY[grid_idx].x, gridZ[grid_idx].x );
-	
+	for ( int ii = 0; ii < n.x; ++ii ){
+
+		t.x = threadIdx.x + ii*blockDim.x;
+
+		for ( int jj = 0; jj < n.y; ++jj ){
+
+			t.y = threadIdx.y + jj*blockDim.y;
+
+			for ( int kk = 0; kk < n.z; ++kk ){
+
+				t.z = threadIdx.z + kk*blockDim.z;
+
+				if( ( t.x < P ) && ( t.y < P ) && ( t.z < P ) ){
+
+					int x_inp = x + t.x - Pd2 + 1 - (P % 2) * ( pos_frac.x - Scalar( x ) < 0.5  );
+					int y_inp = y + t.y - Pd2 + 1 - (P % 2) * ( pos_frac.y - Scalar( y ) < 0.5  );
+					int z_inp = z + t.z - Pd2 + 1 - (P % 2) * ( pos_frac.z - Scalar( z ) < 0.5  );
+					
+					x_inp = (x_inp<0) ? x_inp+Nx : ( (x_inp>Nx-1) ? x_inp-Nx : x_inp );
+					y_inp = (y_inp<0) ? y_inp+Ny : ( (y_inp>Ny-1) ? y_inp-Ny : y_inp );
+					z_inp = (z_inp<0) ? z_inp+Nz : ( (z_inp>Nz-1) ? z_inp-Nz : z_inp );
+					
+					Scalar3 pos_grid;
+					pos_grid.x = gridh.x*x_inp - Ld2.x;
+					pos_grid.y = gridh.y*y_inp - Ld2.y;
+					pos_grid.z = gridh.z*z_inp - Ld2.z;
+
+					pos_grid.x = pos_grid.x + box.getTiltFactorXY() * pos_grid.y; // shear lattic position
+					
+					int grid_idx = x_inp * Ny * Nz + y_inp * Nz + z_inp;
+					
+					// Distance from particle to grid node
+					Scalar3 r = pos_grid - pos;
+					r = box.minImage(r);
+					Scalar rsq = r.x*r.x + r.y*r.y + r.z*r.z;
+					
+					// Spreading Factor
+					Scalar Cfac = prefac * expf( -expfac * rsq );
+					
+					// Get velocity from reduction (THIS IS THE SLOW STEP):
+					velocity[thread_offset] += Cfac * make_scalar3( gridX[grid_idx].x, gridY[grid_idx].x, gridZ[grid_idx].x );
+				}
+			}//kk
+		}//jj
+	}//ii
+
 	int offs = block_size;
 	int offs_prev; 
 	while (offs > 1)
@@ -466,8 +501,9 @@ void gpu_stokes_Mwave_wrap( Scalar4 *d_pos,
     
 	// Spreading and contraction stuff
 	dim3 Cgrid( group_size, 1, 1);
-	dim3 Cthreads(P, P, P);
-	
+	int B = ( P < 10 ) ? P : 10;
+	dim3 Cthreads(B, B, B);
+
 	Scalar quadW = gridh.x * gridh.y * gridh.z;
 	Scalar xisq = xi * xi;
 	Scalar prefac = ( 2.0 * xisq / 3.1415926536 / eta ) * sqrtf( 2.0 * xisq / 3.1415926536 / eta );
@@ -495,7 +531,7 @@ void gpu_stokes_Mwave_wrap( Scalar4 *d_pos,
 	cufftExecC2C(plan, d_gridZ, d_gridZ, CUFFT_INVERSE);
 	
 	// Evaluate contribution of grid velocities at particle centers
-	gpu_stokes_Contract_kernel<<<Cgrid, Cthreads, (P*P*P+1)*sizeof(float3)>>>( d_pos, d_vel, d_gridX, d_gridY, d_gridZ, group_size, Nx, Ny, Nz, xi, eta, d_group_members, box, P, gridh, d_diameter, quadW*prefac, expfac );
+	gpu_stokes_Contract_kernel<<<Cgrid, Cthreads, (B*B*B+1)*sizeof(float3)>>>( d_pos, d_vel, d_gridX, d_gridY, d_gridZ, group_size, Nx, Ny, Nz, xi, eta, d_group_members, box, P, gridh, d_diameter, quadW*prefac, expfac );
  
 }
 

@@ -204,41 +204,47 @@ void gpu_stokes_BrownianGridGenerate_kernel(  CUFFTCOMPLEX *gridX,
 		int kk = idx % Nz;
 		int jj = ( ( idx - kk ) / Nz ) % Ny;
 		int ii = ( ( idx - kk ) / Nz - jj ) / Ny;
-		
-		// Is current grid point a nyquist point
-		bool ii_nyquist = ( ( ii == Nx/2 ) && ( Nx/2 == (Nx+1)/2 ) );
-		bool jj_nyquist = ( ( jj == Ny/2 ) && ( Ny/2 == (Ny+1)/2 ) );
-		bool kk_nyquist = ( ( kk == Nz/2 ) && ( Nz/2 == (Nz+1)/2 ) );
-		
-		// Index of conjugate point
-		int ii_conj, jj_conj, kk_conj;
-		if ( ii == 0 || ii_nyquist ){
-			ii_conj = ii;
-		}
-		else {
-			ii_conj = Nx - ii;
-		}
-		if ( jj == 0 || jj_nyquist ){
-			jj_conj = jj;
-		}
-		else {
-			jj_conj = Ny - jj;
-		}
-		if ( kk == 0 || kk_nyquist ){
-			kk_conj = kk;
-		}
-		else {
-			kk_conj = Nz - kk;
-		}
-	
+			
 		// Scaling factor for covaraince	
 		Scalar fac = sqrtf(2.0*T/dt/quadW);
 		
 		// Place value on the grid
 		Scalar2 fX, fY, fZ;
+		Scalar2 fX_conj, fY_conj, fZ_conj;
 		Scalar2 kdF, kdF_conj;
 		Scalar B12, B12_conj;
-		if ( kk <= Nz/2 ){
+		if ( 
+		     !( 2 * kk >= Nz + 1 ) &&
+		     !( ( kk == 0 ) && ( 2 * jj >= Ny + 1 ) ) &&
+		     !( ( kk == 0 ) && ( jj == 0 ) && ( 2 * ii >= Nx + 1 ) ) &&
+		     !( ( kk == 0 ) && ( jj == 0 ) && ( ii == 0 ) ) 
+		){
+
+			// Is current grid point a nyquist point
+			bool ii_nyquist = ( ( ii == Nx/2 ) && ( Nx/2 == (Nx+1)/2 ) );
+			bool jj_nyquist = ( ( jj == Ny/2 ) && ( Ny/2 == (Ny+1)/2 ) );
+			bool kk_nyquist = ( ( kk == Nz/2 ) && ( Nz/2 == (Nz+1)/2 ) );
+			
+			// Index of conjugate point
+			int ii_conj, jj_conj, kk_conj;
+			if ( ii == 0 ){
+				ii_conj = ii;
+			}
+			else {
+				ii_conj = Nx - ii;
+			}
+			if ( jj == 0 ){
+				jj_conj = jj;
+			}
+			else {
+				jj_conj = Ny - jj;
+			}
+			if ( kk == 0 ){
+				kk_conj = kk;
+			}
+			else {
+				kk_conj = Nz - kk;
+			}
 		
 			// index of conjugate grid point
 			int conj_idx = ii_conj * Ny*Nz + jj_conj * Nz + kk_conj;
@@ -250,9 +256,6 @@ void gpu_stokes_BrownianGridGenerate_kernel(  CUFFTCOMPLEX *gridX,
 			Scalar ksq = tk.x*tk.x + tk.y*tk.y + tk.z*tk.z;
 			Scalar ksq_conj = tk_conj.x*tk_conj.x + tk_conj.y*tk_conj.y + tk_conj.z*tk_conj.z;
 		
-			// Don't have to worry about the origin in this case because we neglect k=0 in the Ewald sum,
-			//    so the scaling factor is zero and nothing gets added
-			
 			// Nyquist points
 			if ( ( ii == 0    && jj_nyquist && kk == 0 ) ||
 			     ( ii_nyquist && jj == 0    && kk == 0 ) ||
@@ -289,8 +292,12 @@ void gpu_stokes_BrownianGridGenerate_kernel(  CUFFTCOMPLEX *gridX,
 				fY = make_scalar2( reY, imY );
 				fZ = make_scalar2( reZ, imZ );
 		
+				fX_conj = make_scalar2( reX, -imX );
+				fY_conj = make_scalar2( reY, -imY );
+				fZ_conj = make_scalar2( reZ, -imZ );
+
 				kdF = make_scalar2( ( tk.x*fX.x + tk.y*fY.x + tk.z*fZ.x ) / ksq,  ( tk.x*fX.y + tk.y*fY.y + tk.z*fZ.y ) / ksq );
-				kdF_conj = make_scalar2( ( tk_conj.x*fX.x + tk_conj.y*fY.x + tk_conj.z*fZ.x ) / ksq_conj,  ( tk_conj.x*fX.y + tk_conj.y*fY.y + tk_conj.z*fZ.y ) / ksq_conj );
+				kdF_conj = make_scalar2( ( tk_conj.x*fX_conj.x + tk_conj.y*fY_conj.x + tk_conj.z*fZ_conj.x ) / ksq_conj,  ( tk_conj.x*fX_conj.y + tk_conj.y*fY_conj.y + tk_conj.z*fZ_conj.y ) / ksq_conj );
 			
 				B12 = sqrtf( tk.w );
 				B12_conj = sqrtf( tk_conj.w );
@@ -309,14 +316,14 @@ void gpu_stokes_BrownianGridGenerate_kernel(  CUFFTCOMPLEX *gridX,
 				gridZ[idx].x = gridZ[idx].x + fac * ( fZ.x - tk.z * kdF.x ) * B12;
 				gridZ[idx].y = gridZ[idx].y + fac * ( fZ.y - tk.z * kdF.y ) * B12;
 			
-				gridX[conj_idx].x = gridX[conj_idx].x + fac * ( fX.x - tk_conj.x * kdF_conj.x ) * B12_conj;
-				gridX[conj_idx].y = gridX[conj_idx].y + fac * ( fX.y - tk_conj.x * kdF_conj.y ) * B12_conj;
+				gridX[conj_idx].x = gridX[conj_idx].x + fac * ( fX_conj.x - tk_conj.x * kdF_conj.x ) * B12_conj;
+				gridX[conj_idx].y = gridX[conj_idx].y + fac * ( fX_conj.y - tk_conj.x * kdF_conj.y ) * B12_conj;
 				
-				gridY[conj_idx].x = gridY[conj_idx].x + fac * ( fY.x - tk_conj.y * kdF_conj.x ) * B12_conj;
-				gridY[conj_idx].y = gridY[conj_idx].y + fac * ( fY.y - tk_conj.y * kdF_conj.y ) * B12_conj;
+				gridY[conj_idx].x = gridY[conj_idx].x + fac * ( fY_conj.x - tk_conj.y * kdF_conj.x ) * B12_conj;
+				gridY[conj_idx].y = gridY[conj_idx].y + fac * ( fY_conj.y - tk_conj.y * kdF_conj.y ) * B12_conj;
 				
-				gridZ[conj_idx].x = gridZ[conj_idx].x + fac * ( fZ.x - tk_conj.z * kdF_conj.x ) * B12_conj;
-				gridZ[conj_idx].y = gridZ[conj_idx].y + fac * ( fZ.y - tk_conj.z * kdF_conj.y ) * B12_conj;
+				gridZ[conj_idx].x = gridZ[conj_idx].x + fac * ( fZ_conj.x - tk_conj.z * kdF_conj.x ) * B12_conj;
+				gridZ[conj_idx].y = gridZ[conj_idx].y + fac * ( fZ_conj.y - tk_conj.z * kdF_conj.y ) * B12_conj;
 		
 			}
 		
@@ -1193,8 +1200,9 @@ void gpu_stokes_CombinedMobilityBrownian_wrap(  Scalar4 *d_pos,
 
     // Spreading and contraction stuff
     dim3 Cgrid( group_size, 1, 1);
-    dim3 Cthreads(P, P, P);
- 
+    int B = ( P < 10 ) ? P : 10;
+    dim3 Cthreads(B, B, B);
+    
     Scalar quadW = gridh.x * gridh.y * gridh.z;
     Scalar xisq = xi * xi;
     Scalar prefac = ( 2.0 * xisq / 3.1415926536 / eta ) * sqrtf( 2.0 * xisq / 3.1415926536 / eta );
@@ -1240,9 +1248,8 @@ void gpu_stokes_CombinedMobilityBrownian_wrap(  Scalar4 *d_pos,
     cufftExecC2C(plan, d_gridY, d_gridY, CUFFT_INVERSE);
     cufftExecC2C(plan, d_gridZ, d_gridZ, CUFFT_INVERSE);
 
-
     // Evaluate contribution of grid velocities at particle centers
-    gpu_stokes_Contract_kernel<<<Cgrid, Cthreads, (P*P*P+1)*sizeof(float3)>>>( d_pos, d_vel, d_gridX, d_gridY, d_gridZ, group_size, Nx, Ny, Nz, xi, eta, d_group_members, box, P, gridh, d_diameter, quadW*prefac, expfac );
+    gpu_stokes_Contract_kernel<<<Cgrid, Cthreads, (B*B*B+1)*sizeof(float3)>>>( d_pos, d_vel, d_gridX, d_gridY, d_gridZ, group_size, Nx, Ny, Nz, xi, eta, d_group_members, box, P, gridh, d_diameter, quadW*prefac, expfac );
 
     // ***************************************
     // Real Space Part of Both Calculations

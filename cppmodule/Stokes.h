@@ -57,6 +57,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cufft.h>
 
 #include "NeighborList.h"
+#include "ShearFunction.h"
 
 #ifndef SINGLE_PRECISION
 #define CUFFTCOMPLEX cufftComplex
@@ -107,51 +108,51 @@ class Stokes : public IntegrationMethodTwoStep
 
         //! Set the parameters for Ewald summation
         void setParams();
-        
-        int partition(float *A, int lo, int hi);
-        int partitionInt(int *A, int lo, int hi);
 
-        void QuickSort(float *A, int lo, int hi);
-        void QuickSortInt(int *A, int lo, int hi);
+	//! Set the shear rate and shear frequency
+    	void setShear(boost::shared_ptr<ShearFunction> shear_func, Scalar max_strain) {
+      		m_shear_func = shear_func;
+      		m_max_strain = max_strain;
+  	}
 
-        
     protected:
-        
-        Scalar m_limit_val; //!< The maximum distance a particle is to move in one step
-       
+
 	boost::shared_ptr<Variant> m_T;   //!< The Temperature of the Stochastic Bath
         unsigned int m_seed;              //!< The seed for the RNG of the Stochastic Bath
-        
+
         cufftHandle plan;       //!< Used for the Fast Fourier Transformations performed on the GPU
-        
+
         boost::shared_ptr<NeighborList> m_nlist;    //!< The neighborlist to use for the computation
-        
+
+	boost::shared_ptr<ShearFunction> m_shear_func; //!< mutable shared pointer towards a ShearFunction object
+	Scalar m_max_strain; //!< Maximum total strain before box resizing
+
         Scalar m_xi;                   //!< ewald splitting parameter xi
         Scalar m_ewald_cut;            //!< Real space cutoff
         GPUArray<Scalar4> m_ewaldC1;   //!< Real space Ewald coefficients table
         int m_ewald_n;                 //!< Number of entries in table of Ewald coefficients
         Scalar m_ewald_dr;             //!< Real space Ewald table spacing
- 
+
 	Scalar m_self; //!< self piece
-    
+
         int m_Nx;  //!< Number of grid points in x direction
         int m_Ny;  //!< Number of grid points in y direction
         int m_Nz;  //!< Number of grid points in z direction
-        
+
         GPUArray<Scalar4> m_gridk;        //!< k-vectors for each grid point
         GPUArray<CUFFTCOMPLEX> m_gridX;   //!< x component of the grid based force
         GPUArray<CUFFTCOMPLEX> m_gridY;   //!< x component of the grid based force
         GPUArray<CUFFTCOMPLEX> m_gridZ;   //!< x component of the grid based force
-          
+
         Scalar m_gaussm;  //!< Gaussian width in standard deviations for wave space spreading/contraction
-        int m_gaussP;     //!< Number of points in each dimension for Gaussian support 
+        int m_gaussP;     //!< Number of points in each dimension for Gaussian support
         Scalar m_eta;     //!< Gaussian spreading parameter
         Scalar3 m_gridh;  //!< Size of the grid box in 3 direction
-        
+
         int m_m_Lanczos;       //!< Number of Lanczos Iterations to use for calculation of Brownian displacement
 
         Scalar m_error;  //!< Error tolerance for all calculations
-        
+
     };
 
 //! Exports the Stokes class to python

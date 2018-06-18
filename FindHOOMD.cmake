@@ -148,6 +148,6 @@ include (HOOMDMPISetup)
 
 #set(HOOMD_LIBRARIES ${HOOMD_LIB} ${HOOMD_COMMON_LIBS})
 
-#set(HOOMD_LIBRARIES ${HOOMD_LIB} ${HOOMD_COMMON_LIBS} /usr/local/cuda-7.0/lib64/libcublas.so )
+#set(HOOMD_LIBRARIES ${HOOMD_LIB} ${HOOMD_COMMON_LIBS} /usr/local/cuda/lib64/libcublas.so )
 
 endif (HOOMD_FOUND)

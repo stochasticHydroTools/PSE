@@ -49,6 +49,8 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // Include the defined classes that are to be exported to python
 #include "Stokes.h"
+#include "VariantShearFunction.h"
+#include "ShearFunction.h"
 
 // Include boost.python to do the exporting
 #include <boost/python.hpp>
@@ -61,5 +63,6 @@ BOOST_PYTHON_MODULE(_PSEv1)
     #ifdef ENABLE_CUDA
 	export_Stokes();
     #endif
+    export_VariantShearFunction();
+  export_ShearFunction();
     }
-

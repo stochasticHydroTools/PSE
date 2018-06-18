@@ -54,4 +54,5 @@
 # NOTE: adjust the import statement to match the name of the template
 # (here: plugin_template)
 import integrate
-
+import shear_function
+import variant

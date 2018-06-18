@@ -314,5 +314,55 @@ void gpu_stokes_ScaleGrid_kernel(CUFFTCOMPLEX *d_a, Scalar s, unsigned int NxNyN
 	}
 }
 
+/*!
+  Kernel function to calculate position of each grid in reciprocal space: gridk
+  */
+__global__
+void gpu_stokes_SetGridk_kernel(Scalar4 *gridk,
+                                int Nx,
+                                int Ny,
+                                int Nz,
+                                unsigned int NxNyNz,
+                                BoxDim box,
+                                Scalar xi,
+				Scalar eta)
+{
+        int tid = blockDim.x * blockIdx.x + threadIdx.x;
+
+        if ( tid < NxNyNz ) {
+
+                int i = tid / (Ny*Nz);
+                int j = (tid - i * Ny * Nz) / Nz;
+                int k = tid % Nz;
+
+                Scalar3 L = box.getL();
+                Scalar xy = box.getTiltFactorXY();
+                Scalar4 gridk_value;
+
+                gridk_value.x = (i < (Nx+1) / 2) ? i : i - Nx;
+                gridk_value.y = ( ((j < (Ny+1) / 2) ? j : j - Ny) - xy * gridk_value.x * L.y / L.x ) / L.y; // Fixed by Zsigi 2015
+                gridk_value.x = gridk_value.x / L.x;
+                gridk_value.z = ((k < (Nz+1) / 2) ? k : k - Nz) / L.z;
+
+		gridk_value.x *= 2.0*3.1416926536;
+		gridk_value.y *= 2.0*3.1416926536;
+		gridk_value.z *= 2.0*3.1416926536;
+
+                Scalar k2 = gridk_value.x*gridk_value.x + gridk_value.y*gridk_value.y + gridk_value.z*gridk_value.z;
+		Scalar xisq = xi * xi;
+
+		// Scaling factor used in wave space sum
+		if (i == 0 && j == 0 && k == 0){
+			gridk_value.w = 0.0;
+		}
+		else{
+			// Have to divide by Nx*Ny*Nz to normalize the FFTs
+			gridk_value.w = 6.0*3.1415926536 * (1.0 + k2/4.0/xisq) * expf( -(1-eta) * k2/4.0/xisq ) / ( k2 ) / Scalar( Nx*Ny*Nz );
+		}
+
+                gridk[tid] = gridk_value;
+
+        }
+}
 
 

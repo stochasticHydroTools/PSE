@@ -54,7 +54,7 @@
 # in front
 import _PSEv1
 
-# Next, since we are extending an updater, we need to bring in the base class updater and some other parts from 
+# Next, since we are extending an updater, we need to bring in the base class updater and some other parts from
 # hoomd_script
 from hoomd_script.integrate import _integration_method
 
@@ -64,6 +64,7 @@ import hoomd
 from hoomd_script import variant
 from hoomd_script import compute
 import math
+import shear_function
 
 ## One step overdamped integration with hydrodynamic interactions
 
@@ -74,34 +75,19 @@ class PSEv1(_integration_method):
     # \param T                  Temperature of the simulation (in energy units)
     # \param seed               Random seed to use for the run. Simulations that are identical, except for the seed, will follow
     #                             different trajectories.
-    # \param limit              (optional) Enforce that no particle moves more than a distance of \a limit in a single time step
-    # \param n_cheb             Order of Chebyshev approximation
-    # \param cheb_reset_period  how often to recompute Chebyshev approximation
     # \param xi                 Ewald splitting parameter
-    # \param Ewald_cut          Cutoff for real space interactions
-    # \param Ewald_Nx           Number of grid nodes in x-direction
-    # \param Ewald_Ny           Number of grid nodes in y-direction
-    # \param Ewald_Nz           Number of grid nodes in z-direction
-    # \param gaussm             Number of standard deviations contained in Gaussians
-    # \param gaussP             Number of grid nodes in the support of each Gaussian
+    # \param error		Relative error for all calculations
+    # \param function_form	Functional form for shear
+    # \param max_strain		Maximum box deformation for shear
     #
-    # \a T can be a variant type, allowing for temperature ramps in simulation runs.
+    #
+    # T can be a variant type, allowing for temperature ramps in simulation runs.
     #
     # Internally, a compute.thermo is automatically specified and associated with \a group.
-    #
-    #
-    # \warning If starting from a restart binary file, the energy of the reservoir will be reset to zero.
-    # \b Examples:
-    # \code
-    # all = group.all();
-    # integrate.bdnvt(group=all, T=1.0, seed=5)
-    # integrator = integrate.bdnvt(group=all, T=1.0, seed=100)
-    # integrate.bdnvt(group=all, T=1.0, limit=0.01, gamma_diam=1, tally=True)
-    # typeA = group.type('A');
-    # integrate.bdnvt(group=typeA, T=variant.linear_interp([(0, 4.0), (1e6, 1.0)]))
-    # \endcode
-    def __init__(self, group, T, limit=None, seed=0, xi = 0.5, error = 0.001):
-        util.print_status_line();
+    
+    def __init__(self, group, T, seed=0, xi = 0.5, error = 0.001, function_form = None, max_strain = 0.5, nlist_type = "cell" ):
+        
+	util.print_status_line();
 
         # initialize base class
         _integration_method.__init__(self);
@@ -112,44 +98,60 @@ class PSEv1(_integration_method):
         # create the compute thermo
         compute._get_unique_thermo(group=group);
 
-	#self.rcut = Ewald_cut;
+	# Real space neighborlist cutoff based on error estimate for spectral sums
 	self.rcut = math.sqrt( - math.log( error ) ) / xi;
-	#self.rcut = 5.0;
 	# If this line is changed, remember to change in C++ code as well!!
-
-	# update the neighbor list
-        # neighbor_list = pair._update_global_nlist(self.rcut)
-        # neighbor_list.subscribe(lambda: self.rcut)
 
         # initialize the reflected c++ class
         if not globals.exec_conf.isCUDAEnabled():
-            globals.msg.error("Sorry, we have not written CPU code for Stokesian Dynamics simulation. \n");
+            globals.msg.error("Sorry, we have not written CPU code for PSE RPY simulation. \n");
             raise RuntimeError('Error creating Stokes');
         else:
-	    # Create a new neighbor list
-	    cl_stokes = hoomd.CellListGPU(globals.system_definition);
-	    globals.system.addCompute(cl_stokes, "stokes_cl")
-	    self.neighbor_list = hoomd.NeighborListGPUBinned(globals.system_definition, self.rcut, 0.4, cl_stokes);
+	    
+	    # Create a neighborlist exclusively for real space interactions. Use cell lists by 
+	    # default, but also allow the user to specify
+            if ( nlist_type.upper() == "CELL" ):
+
+	    	cl_stokes = hoomd.CellListGPU(globals.system_definition);
+	    	globals.system.addCompute(cl_stokes, "stokes_cl")
+	    	self.neighbor_list = hoomd.NeighborListGPUBinned(globals.system_definition, self.rcut, 0.4, cl_stokes);
+
+	    elif ( nlist_type.upper() == "TREE" ):
+
+		self.neighbor_list = hoomd.NeighborListGPUTree(globals.system_definition, self.rcut, 0.4)
+
+	    elif ( nlist_type.upper() == "STENCIL" ):
+
+            	cl_stokes  = hoomd.CellListGPU(globals.system_definition)
+            	globals.system.addCompute(cl_stokes, "stokes_cl")
+            	cls_stokes = hoomd.CellListStencil( globals.system_definition, cl_stokes )
+            	globals.system.addCompute( cls_stokes, "stokes_cls")
+            	self.neighbor_list = hoomd.NeighborListGPUStencil(globals.system_definition, self.rcut, 0.4, cl_stokes, cls_stokes)
+
+	    else:
+            	globals.msg.error("Invalid neighborlist method specified. Valid options are: cell, tree, stencil. \n");
+            	raise RuntimeError('Error constructing neighborlist');
+
+	    # Set neighborlist properties
 	    self.neighbor_list.setEvery(1, True);
 	    globals.system.addCompute(self.neighbor_list, "stokes_nlist")
-	    #self.neighbor_list.clearExclusions();
-            #self.neighbor_list.setFilterBody(False);
-            #self.neighbor_list.setFilterDiameter(False);
 	    self.neighbor_list.countExclusions();
 
-            self.cpp_method = _PSEv1.Stokes(globals.system_definition, group.cpp_group, T.cpp_variant, seed, self.neighbor_list, xi, error); 
-
-        # set the limit
-        if limit is not None:
-            self.cpp_method.setLimit(limit);
+	    # Call the stokes integrator
+            self.cpp_method = _PSEv1.Stokes(globals.system_definition, group.cpp_group, T.cpp_variant, seed, self.neighbor_list, xi, error);
 
         self.cpp_method.validateGroup()
+
+	if function_form is not None:
+            self.cpp_method.setShear(function_form.cpp_function, max_strain)
+        else:
+            no_shear_function = shear_function.steady(dt = 0)
+            self.cpp_method.setShear(no_shear_function.cpp_function, max_strain)
 
 	self.cpp_method.setParams()
 
     ## Changes parameters of an existing integrator
     # \param self self
-    # \param limit (if set) New limit value to set. Removes the limit if limit is False
     # \param T Temperature
     #
     # To change the parameters of an existing integrator, you must save it in a variable when it is
@@ -157,24 +159,20 @@ class PSEv1(_integration_method):
     # \code
     # integrator = integrate.nve(group=all)
     # \endcode
-    #
-    # \b Examples:
-    # \code
-    # integrator.set_params(limit=0.01)
-    # integrator.set_params(limit=False)
-    # \endcode
-    def set_params(self, limit=None, T=None):
+    
+    def set_params(self, T=None, function_form = None, max_strain=0.5):
         util.print_status_line();
         self.check_initialization();
-
-        # change the parameters
-        if limit is not None:
-            if limit == False:
-                self.cpp_method.removeLimit();
-            else:
-                self.cpp_method.setLimit(limit);
 
 	if T is not None:
             # setup the variant inputs
             T = variant._setup_variant_input(T);
             self.cpp_method.setT(T.cpp_variant);
+
+	if function_form is not None:
+            self.cpp_method.setShear(function_form.cpp_function, max_strain)
+
+    ## Stop any shear
+    def stop_shear(self, max_strain = 0.5):
+        no_shear_function = shear_function.steady(dt = 0)
+        self.cpp_method.setShear(no_shear_function.cpp_function, max_strain)

@@ -86,4 +86,7 @@ __global__ void gpu_stokes_AddGrids_kernel(CUFFTCOMPLEX *d_a, CUFFTCOMPLEX *d_b,
 
 __global__ void gpu_stokes_ScaleGrid_kernel(CUFFTCOMPLEX *d_a, Scalar s, unsigned int NxNyNz);
 
+__global__ void gpu_stokes_SetGridk_kernel(Scalar4 *gridk, int Nx, int Ny, int Nz, unsigned int NxNyNz, BoxDim box, Scalar xi, Scalar eta);
+
+
 #endif

@@ -109,7 +109,8 @@ cudaError_t gpu_stokes_step_one(Scalar4 *d_pos,
 			     const int P,
 			     Scalar3 gridh,
 			     const Scalar *d_diameter,
-			     Scalar cheb_error);
+			     Scalar cheb_error,
+			     Scalar current_shear_rate);
 
 
 #endif

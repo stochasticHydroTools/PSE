@@ -124,9 +124,6 @@ scalar4_tex_t pos_tex;
     \param group_size       Number of members in the group
     \param box Box          dimensions for periodic boundary condition handling
     \param deltaT           timestep
-    \param limit            If \a limit is true, then the dynamics will be limited so that particles do not move
-                             a distance further than \a limit_val in one step.
-    \param limit_val        Length to limit particle distance movement to
     \param d_net_force      net force on each particle, only used to set "accelerations"
 
     This kernel must be executed with a 1D grid of any block size such that the number of threads is greater than or
@@ -147,7 +144,8 @@ void gpu_stokes_step_one_kernel(Scalar4 *d_pos,
                              unsigned int group_size,
                              BoxDim box,
                              Scalar deltaT,
-			     Scalar4 *d_net_force)
+			     Scalar4 *d_net_force,
+			     Scalar shear_rate)
     {
 
     // determine which particle this thread works on (MEM TRANSFER: 4 bytes)
@@ -165,6 +163,9 @@ void gpu_stokes_step_one_kernel(Scalar4 *d_pos,
         Scalar4 velmass = d_vel[idx];
 	Scalar mass = velmass.w;
         Scalar3 vel = make_scalar3(velmass.x, velmass.y, velmass.z);
+
+	// Add the shear
+        vel.x += shear_rate * pos.y;
 
 	Scalar4 net_force = d_net_force[idx];
         Scalar3 accel = make_scalar3(net_force.x, net_force.y, net_force.z);
@@ -198,9 +199,6 @@ void gpu_stokes_step_one_kernel(Scalar4 *d_pos,
     \param group_size         Number of members in the group ( i.e. number of particles to consider )
     \param box                Box dimensions for periodic boundary condition handling
     \param dt                 timestep
-    \param limit              If \a limit is true, then the dynamics will be limited so that particles do not move
-                                a distance further than \a limit_val in one step.
-    \param limit_val          Length to limit particle distance movement to
     \param block_size         optimum block size returned by an autotuner
     \param d_net_force        net force on the particles
     \param T                  temperature
@@ -270,7 +268,8 @@ cudaError_t gpu_stokes_step_one(Scalar4 *d_pos,
 			     const int P,
 			     Scalar3 gridh,
 			     const Scalar *d_diameter,
-			     Scalar cheb_error){
+			     Scalar cheb_error,
+			     Scalar shear_rate){
 
 	unsigned int NxNyNz = Nx*Ny*Nz;
 	// setup the grid to run the kernel
@@ -291,6 +290,9 @@ cudaError_t gpu_stokes_step_one(Scalar4 *d_pos,
 	pos_tex.normalized = false; // Not normalized
 	pos_tex.filterMode = cudaFilterModePoint; // Filter mode: floor of the index
 	cudaBindTexture(0, pos_tex, d_pos, sizeof(Scalar4) * N_total);
+
+	// Get sheared grid vectors
+    	gpu_stokes_SetGridk_kernel<<<gridNBlock,gridBlockSize>>>(d_gridk,Nx,Ny,Nz,NxNyNz,box,xi,eta);
 
 	// Do Mobility and Brownian Calculations
 	gpu_stokes_CombinedMobilityBrownian_wrap(  	d_pos,
@@ -348,7 +350,7 @@ cudaError_t gpu_stokes_step_one(Scalar4 *d_pos,
 	//printf("vel: %f %f %f \n", vel.x, vel.y, vel.z );
 
 	// run the kernel to calculate displacement
-	gpu_stokes_step_one_kernel<<< grid, threads >>>(d_pos, d_vel, d_accel, d_image, d_group_members, group_size, box, dt, d_net_force);
+	gpu_stokes_step_one_kernel<<< grid, threads >>>(d_pos, d_vel, d_accel, d_image, d_group_members, group_size, box, dt, d_net_force, shear_rate);
 	gpuErrchk(cudaPeekAtLastError());
 	
 	// Cleanup
