@@ -2,8 +2,9 @@
 # classes representing shear functions, which can be input of an integrator and variant
 # to shear the box of a simulation
 
-import _PSEv1
-from hoomd_script import globals
+from hoomd.PSEv1 import _PSEv1
+
+import hoomd
 
 ## shear function interface representing shear flow field described by a function
 class _shear_function:
@@ -13,14 +14,14 @@ class _shear_function:
         self.cpp_function = None
 
         if zero == 'now':
-            self._offset = globals.system.getCurrentTimeStep()
+            self._offset = hoomd.context.current.system.getCurrentTimeStep()
         else:
             # validate zero
             if zero < 0:
-                globals.msg.error("Cannot create a shear_function variant with a negative zero\n")
+                hoomd.context.msg.error("Cannot create a shear_function variant with a negative zero\n")
                 raise RuntimeError('Error creating shear function')
-            if zero > globals.system.getCurrentTimeStep():
-                globals.msg.error("Cannot create a shear_function variant with a zero in the future\n")
+            if zero > hoomd.context.current.system.getCurrentTimeStep():
+                hoomd.context.msg.error("Cannot create a shear_function variant with a zero in the future\n")
                 raise RuntimeError('Error creating shear function')
             self._offset = zero
 
@@ -60,10 +61,10 @@ class sine(_shear_function):
     def __init__(self, dt, shear_rate, shear_freq, zero = 'now'):
 
         if shear_rate <= 0:
-            globals.msg.error("Shear rate must be positive (use steady class instead for zero shear)\n")
+            hoomd.context.msg.error("Shear rate must be positive (use steady class instead for zero shear)\n")
             raise RuntimeError("Error creating shear function")
         if shear_freq <= 0:
-            globals.msg.error("Shear frequency must be positive (use steady class instead for steady shear)\n")
+            hoomd.context.msg.error("Shear frequency must be positive (use steady class instead for steady shear)\n")
             raise RuntimeError("Error creating shear function")
 
         _shear_function.__init__(self, zero)
@@ -94,7 +95,7 @@ class tukey_window(_shear_function):
     def __init__(self, dt, periodT, tukey_param, zero = 'now'):
 
         if tukey_param <= 0 or tukey_param > 1:
-            globals.msg.error("Tukey parameter must be within (0, 1]")
+            hoomd.context.msg.error("Tukey parameter must be within (0, 1]")
             raise RuntimeError("Error creating Tukey window function")
 
         _shear_function.__init__(self, zero)

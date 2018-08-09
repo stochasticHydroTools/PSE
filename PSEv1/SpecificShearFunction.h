@@ -2,34 +2,15 @@
 #error This header cannot be compiled by nvcc
 #endif
 
-#ifndef __SHEAR_FUNCTION_H__
-#define __SHEAR_FUNCTION_H__
+#include <hoomd/extern/pybind/include/pybind11/pybind11.h>
+
+#include "ShearFunction.h"
+
+#ifndef __SPECIFIC_SHEAR_FUNCTION_H__
+#define __SPECIFIC_SHEAR_FUNCTION_H__
 
 #include <cmath>
-#include <boost/utility.hpp>
-#include <boost/shared_ptr.hpp>
 
-//! Abstract class representing the function of shear rate and shear strain
-/*! ShearFunction class, having three public pure virtual functions:
-        1) getShearRate; 2) getStrain; and 3) getOffset
-    This interface can make it easier to add new shear functionality to HOOMD.
-    Compared with previous approach, we can simply subclass this interface without
-    changing any existing code or creating a new plugin.
-*/
-class ShearFunction : private boost::noncopyable
-{
-public:
-    //! Get shear rate at certain timestep
-    /*! \param timestep the timestep
-     */
-    virtual double getShearRate(unsigned int timestep) = 0;
-    //! Get strain at certain timestep (unwrapped)
-    /*! \param timestep the timestep
-     */
-    virtual double getStrain(unsigned int timestep) = 0;
-    //! Get the offset of timestep (typically offset is the timestep when the shear starts)
-    virtual unsigned int getOffset() = 0;
-};
 
 //! Simple sinusoidal shear implementing the abstract class ShearFunction
 class SinShearFunction : public ShearFunction
@@ -61,7 +42,7 @@ private:
     const double m_frequency; //!< Real frequency, not angular frequency
     const unsigned int m_offset; //!< offset of the sinusoidal oscillatory shear
     const double m_dt; //!< time step
-    static const double m_pi = 3.1415926536;
+    static constexpr double m_pi = 3.1415926536;
 };
 
 //! Simple steady shear implementing the abstract class ShearFunction
@@ -205,7 +186,7 @@ private:
     const double m_tukey_param; //!< The parameter of Tukey window function (scales the cosine lobe)
     const unsigned int m_offset; //!< offset of the window function
     const double m_dt; //!< time step
-    static const double m_pi = 3.1415926536;
+    static constexpr double m_pi = 3.1415926536;
     double m_omega_value; //!< omega value of the cosine function
 };
 
@@ -222,7 +203,7 @@ public:
         \param base_shear_func the base shear function
         \param window_func the window function
      */
-    WindowedFunction(boost::shared_ptr<ShearFunction> base_shear_func, boost::shared_ptr<ShearFunction> window_func) :
+    WindowedFunction(std::shared_ptr<ShearFunction> base_shear_func, std::shared_ptr<ShearFunction> window_func) :
         ShearFunction(),
         m_base_shear_func(base_shear_func),
         m_window_func(window_func) { }
@@ -237,11 +218,11 @@ public:
         return m_base_shear_func -> getOffset();
     }
 private:
-    const boost::shared_ptr<ShearFunction> m_base_shear_func; //!< Base shear function
-    const boost::shared_ptr<ShearFunction> m_window_func; //!< Window function
+    const std::shared_ptr<ShearFunction> m_base_shear_func; //!< Base shear function
+    const std::shared_ptr<ShearFunction> m_window_func; //!< Window function
 };
 
 
-void export_ShearFunction();
+void export_SpecificShearFunction(pybind11::module& m);
 
 #endif

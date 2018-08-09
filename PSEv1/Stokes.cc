@@ -58,16 +58,12 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 using namespace std;
 
-#include <boost/python.hpp>
-using namespace boost::python;
-#include <boost/bind.hpp>
-using namespace boost;
-
 #include <vector>
 #include <algorithm>
 
 #include "Stokes.h"
 #include "Stokes.cuh"
+
 #include <stdio.h>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
@@ -86,19 +82,19 @@ using namespace boost;
 	\param m_error            Tolerance for all calculations
 
 */
-Stokes::Stokes(boost::shared_ptr<SystemDefinition> sysdef,
-                       boost::shared_ptr<ParticleGroup> group,
-					   boost::shared_ptr<Variant> T,
-					   unsigned int seed,
-					   boost::shared_ptr<NeighborList> nlist,
-					   Scalar xi,
-					   Scalar error)
-					   : IntegrationMethodTwoStep(sysdef, group),
-					   m_T(T),
-					   m_seed(seed),
-					   m_nlist(nlist),
-					   m_xi(xi),
-					   m_error(error)
+Stokes::Stokes(	std::shared_ptr<SystemDefinition> sysdef,
+                std::shared_ptr<ParticleGroup> group,
+		std::shared_ptr<Variant> T,
+		unsigned int seed,
+		std::shared_ptr<NeighborList> nlist,
+		Scalar xi,
+		Scalar error )
+		: IntegrationMethodTwoStep(sysdef, group),
+		m_T(T),
+		m_seed(seed),
+		m_nlist(nlist),
+		m_xi(xi),
+		m_error(error)
     {
     m_exec_conf->msg->notice(5) << "Constructing Stokes" << endl;
 
@@ -123,7 +119,12 @@ Stokes::~Stokes()
 
 
 /*!
-	Set the parameters for Spectral Ewald Method
+	Set the parameters for Hydrodynamic Calculation. Do once at the beginning
+	of the simulation and then reuse computed values
+
+	- Pre-tabulate real space interaction functions (f and g)
+	- Set wave space vectors
+
 */
 void Stokes::setParams()
 {
@@ -143,41 +144,44 @@ void Stokes::setParams()
 	m_Ny = int( kmax * L.y / (2.0 * 3.1415926536 ) * 2.0 ) + 1;
 	m_Nz = int( kmax * L.z / (2.0 * 3.1415926536 ) * 2.0 ) + 1;
 
-	// Get list of int values between 8 and 512 that can be written as
+	// Get list of int values between 8 and 4096 that can be written as
 	// 	(2^a)*(3^b)*(5^c)
 	// Then sort list from low to high
+	//
+	// Go to such large values so as to be able simulate boxes with large
+	// aspect ratios
 	std::vector<int> Mlist;
-	for ( int ii = 0; ii < 10; ++ii ){
+	for ( int ii = 0; ii < 13; ++ii ){
 		int pow2 = 1;
 		for ( int i = 0; i < ii; ++i ){
 			pow2 *= 2;
 		}
-		for ( int jj = 0; jj < 6; ++jj ){
+		for ( int jj = 0; jj < 8; ++jj ){
 			int pow3 = 1;
 			for ( int j = 0; j < jj; ++j ){
 				pow3 *= 3;
 			}
-			for ( int kk = 0; kk < 4; ++kk ){
+			for ( int kk = 0; kk < 6; ++kk ){
 				int pow5 = 1;
 				for ( int k = 0; k < kk; ++k ){
 					pow5 *= 5;
 				}
 				int Mcurr = pow2 * pow3 * pow5;
-				if ( Mcurr >= 8 && Mcurr <= 512 ){
+				if ( Mcurr >= 8 && Mcurr <= 4096 ){
 					Mlist.push_back(Mcurr);
 				}
 			}
 		}
 	}
 	std::sort(Mlist.begin(), Mlist.end());
-	const int nmult = Mlist.size(); // 62 such values should exist
+	const int nmult = Mlist.size(); 
 
 	// Compute the number of grid points in each direction
 	//
 	// Number of grid points should be a power of 2,3,5 for most efficient FFTs
 	for ( int ii = 0; ii < nmult; ++ii ){
 		if (m_Nx <= Mlist[ii]){
-			 m_Nx = Mlist[ii];
+			m_Nx = Mlist[ii];
 			break;
 		}
 	}
@@ -194,6 +198,8 @@ void Stokes::setParams()
 		}
 	}
 
+	// Check that we haven't asked for too many grid points
+	// Max allowable by cuFFT is 512^3
 	if ( m_Nx * m_Ny * m_Nz > 512*512*512 ){
 
 		printf("Requested Number of Fourier Nodes Exceeds Max Dimension of 512^3\n");
@@ -201,6 +207,8 @@ void Stokes::setParams()
 		printf("My = %i \n", m_Ny);
 		printf("Mz = %i \n", m_Nz);
 		printf("Mx*My*Mz = %i \n", m_Nx * m_Ny * m_Nz);
+		printf("\n");
+		printf("Note to User: Fix is to reduce xi and try again. \n");
 
 		exit(EXIT_FAILURE);
 	}
@@ -294,17 +302,18 @@ void Stokes::setParams()
 	//
 	// Will precompute scaling factors for real space component of summation for a given
 	//     discretization to speed up GPU calculations
+	//
+	// Do calculation in double precision, then truncate and tabulate, because the
+	// expressions don't behave very well numerically, and double precision ensures
+	// it works. 
 	m_ewald_dr = 0.001; 		           // Distance resolution
 	m_ewald_n = m_ewald_cut / m_ewald_dr - 1;  // Number of entries in tabulation
 
 	double dr = 0.0010000000000000;
 
-	// Get particle diameter and self bit
-	ArrayHandle<Scalar> h_diameter(m_pdata->getDiameters(), access_location::host, access_mode::read);
-	Scalar diameter = h_diameter.data[0];
-
+	// Assume all particles have radius of 1.0
         Scalar pi12 = 1.77245385091;
-        Scalar aa = diameter / 2.0;
+        Scalar aa = 1.0;
 	Scalar axi = aa * m_xi;
 	Scalar axi2 = axi * axi;
         m_self = (1. + 4.*pi12*axi*erfc(2.*axi) - exp(-4.*axi2))/(4.*pi12*axi*aa);
@@ -441,15 +450,12 @@ void Stokes::integrateStepOne(unsigned int timestep)
 	if (m_prof)
 		m_prof->push(m_exec_conf, "Stokes step 1 (no step 2)");
 
-	// access all the needed data
+	// Access all the needed data for the calculation
 	ArrayHandle<Scalar4> d_pos(m_pdata->getPositions(), access_location::device, access_mode::readwrite);
 	ArrayHandle<Scalar4> d_vel(m_pdata->getVelocities(), access_location::device, access_mode::readwrite);
 	ArrayHandle<Scalar3> d_accel(m_pdata->getAccelerations(), access_location::device, access_mode::readwrite);
 	ArrayHandle<Scalar4> d_net_force(net_force, access_location::device, access_mode::read);
 	ArrayHandle<int3> d_image(m_pdata->getImages(), access_location::device, access_mode::readwrite);
-
-	// Read diameters for calculation
-	ArrayHandle<Scalar> d_diameter(m_pdata->getDiameters(), access_location::device, access_mode::read);
 
 	BoxDim box = m_pdata->getBox();
 	ArrayHandle< unsigned int > d_index_array(m_group->getIndexArray(), access_location::device, access_mode::read);
@@ -467,44 +473,45 @@ void Stokes::integrateStepOne(unsigned int timestep)
         Scalar current_shear_rate = m_shear_func -> getShearRate(timestep);
 
 	// perform the update on the GPU
-	gpu_stokes_step_one(d_pos.data,
-		d_vel.data,
-		d_accel.data,
-		d_image.data,
-		d_index_array.data,
-		group_size,
-		box,
-		m_deltaT,
-		256,
-		d_net_force.data,
-		m_T->getValue(timestep),
-		timestep,
-		m_seed,
-		m_xi,
-		m_eta,
-		m_ewald_cut,
-		m_ewald_dr,
-		m_ewald_n,
-		d_ewaldC1.data,
-		m_self,
-		d_gridk.data,
-		d_gridX.data,
-		d_gridY.data,
-		d_gridZ.data,
-		plan,
-		m_Nx,
-		m_Ny,
-		m_Nz,
-		d_n_neigh.data,
-		d_nlist.data,
-		d_headlist.data,
-		m_m_Lanczos,
-		m_pdata->getN(),
-		m_gaussP,
-		m_gridh,
-		d_diameter.data,
-		m_error,
-		current_shear_rate);
+	gpu_stokes_step_one(
+				d_pos.data,
+				d_vel.data,
+				d_accel.data,
+				d_image.data,
+				d_index_array.data,
+				group_size,
+				box,
+				m_deltaT,
+				256,
+				d_net_force.data,
+				m_T->getValue(timestep),
+				timestep,
+				m_seed,
+				m_xi,
+				m_eta,
+				m_ewald_cut,
+				m_ewald_dr,
+				m_ewald_n,
+				d_ewaldC1.data,
+				m_self,
+				d_gridk.data,
+				d_gridX.data,
+				d_gridY.data,
+				d_gridZ.data,
+				plan,
+				m_Nx,
+				m_Ny,
+				m_Nz,
+				d_n_neigh.data,
+				d_nlist.data,
+				d_headlist.data,
+				m_m_Lanczos,
+				m_pdata->getN(),
+				m_gaussP,
+				m_gridh,
+				m_error,
+				current_shear_rate
+				);
 
 	if (m_exec_conf->isCUDAErrorCheckingEnabled())
 		CHECK_CUDA_ERROR();
@@ -522,14 +529,13 @@ void Stokes::integrateStepTwo(unsigned int timestep)
 {
 }
 
-void export_Stokes()
+void export_Stokes(pybind11::module& m)
     {
-    class_<Stokes, boost::shared_ptr<Stokes>, bases<IntegrationMethodTwoStep>, boost::noncopyable>
-		("Stokes", init< boost::shared_ptr<SystemDefinition>, boost::shared_ptr<ParticleGroup>, boost::shared_ptr<Variant>, unsigned int, boost::shared_ptr<NeighborList>, Scalar, Scalar >() )
+    pybind11::class_<Stokes, std::shared_ptr<Stokes> > (m, "Stokes", pybind11::base<IntegrationMethodTwoStep>()) 
+		.def(pybind11::init< std::shared_ptr<SystemDefinition>, std::shared_ptr<ParticleGroup>, std::shared_ptr<Variant>, unsigned int, std::shared_ptr<NeighborList>, Scalar, Scalar >())
 		.def("setT", &Stokes::setT)
 		.def("setParams", &Stokes::setParams)
                 .def("setShear", &Stokes::setShear)
-
         ;
     }
 

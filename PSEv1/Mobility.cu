@@ -48,25 +48,18 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 // Maintainer: joaander
-// Modified by Gang Wang
 // Modified by Andrew Fiore
 
 
 #include "Mobility.cuh"
 #include "Helper.cuh"
-#include "saruprngCUDA.h"
+
+#include "hoomd/TextureTools.h"
+
 #include <stdio.h>
-#include "TextureTools.h"
 
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
-
-#include <thrust/version.h>
-#include <thrust/iterator/zip_iterator.h>
-#include <thrust/reduce.h>
-#include <thrust/sort.h>
-#include <thrust/device_vector.h>
-#include <thrust/device_ptr.h>
 
 #ifdef WIN32
 #include <cassert>
@@ -82,13 +75,9 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 
-/*! \file Stokes.cu
-    \brief Defines GPU kernel code for integration considering hydrodynamic interactions on the GPU. Used by Stokes.cc.
+/*! \file Mobility.cu
+    \brief Defines GPU kernel code for Mobility calculations.
 */
-
-//! Shared memory array for gpu_stokes_step_one_kernel()
-// extern __shared__ Scalar s_gammas[];
-// We will use diameter dependent gamma in the future.
 
 //! Shared memory array for partial sum of dot product kernel
 extern __shared__ Scalar partial_sum[];
@@ -99,15 +88,8 @@ scalar4_tex_t tables1_tex;
 //! Texture for reading particle positions
 scalar4_tex_t pos_tex;
 
-// Define addition of float4
-inline __host__ __device__ float4 operator+(float4 a, float4 b)
-{
-    return make_float4(a.x + b.x, a.y + b.y, a.z + b.z,  a.w + b.w);
-}
-
 //! Spread particle quantities to the grid ( ALL PARTICLES SAME SIZE ) -- give one block per particle
 /*! \param d_pos            positions of the particles, actually they are fetched on texture memory
-    \param d_diameter       array of particle diameters
     \param d_net_force      net forces on the particles
     \param gridX            x-component of force moments projected onto grid
     \param gridY            y-component of force moments projected onto grid
@@ -122,10 +104,15 @@ inline __host__ __device__ float4 operator+(float4 a, float4 b)
     \param gridh            space between grid nodes in each dimension
     \param xi               Ewald splitting parameter
     \param eta              Spectral splitting parameter
+    \param prefac	    Spreading function prefactor
+    \param expfac	    Spreading function exponential factor
+
+    One 3-D block of threads is launched per particle (block dimension = PxPxP). Max dimension
+    is 10x10x10. If P > 10, each thread will do more than one grid point worth of work. 
+
 */
-__global__
-void gpu_stokes_Spread_kernel( 	Scalar4 *d_pos,
-			    	const Scalar  *d_diameter,
+__global__ void gpu_stokes_Spread_kernel( 	
+				Scalar4 *d_pos,
 			    	Scalar4 *d_net_force,
 			    	CUFFTCOMPLEX *gridX,
 			    	CUFFTCOMPLEX *gridY,
@@ -141,14 +128,20 @@ void gpu_stokes_Spread_kernel( 	Scalar4 *d_pos,
 			    	Scalar xi,
 			    	Scalar eta,
 				Scalar prefac,
-				Scalar expfac ) {
+				Scalar expfac 
+				){
 
-	__shared__ float3 shared[2]; // 16 kb max
+	// Shared memory for particle force and position, so that each block
+	// only has to read once
+	__shared__ Scalar3 shared[2]; // 16 kb max
 	
-	float3 *force_shared = shared;
-	float3 *pos_shared = &shared[1];
-	
+	Scalar3 *force_shared = shared;
+	Scalar3 *pos_shared = &shared[1];
+
+	// Offset for the block (i.e. particle ID within group)	
 	int group_idx = blockIdx.x;
+
+	// Offset for the thread (i.e. grid point ID within particle's support)
 	int thread_offset = threadIdx.z + threadIdx.y * blockDim.z + threadIdx.x * blockDim.z*blockDim.y;
 	
 	// Global particle ID
@@ -189,6 +182,8 @@ void gpu_stokes_Spread_kernel( 	Scalar4 *d_pos,
 	int z = int( pos_frac.z );
 
 	// Amount of work needed for each thread to cover support
+	// (Required in case support size is larger than grid dimension,
+	//  but in most cases, should have n.x = n.y = n.z = 1 )
 	int3 n, t;
         n.x = ( P + blockDim.x - 1 ) / blockDim.x; // ceiling
         n.y = ( P + blockDim.y - 1 ) / blockDim.y;
@@ -211,21 +206,30 @@ void gpu_stokes_Spread_kernel( 	Scalar4 *d_pos,
 
 				if ( ( t.x < P ) && ( t.y < P ) && ( t.z < P ) ){
 
+					// x,y,z indices for current thread
+					// 
+					// Arithmetic with P makes sure distribution is centered on the particle
 					int x_inp = x + t.x - Pd2 + 1 - (P % 2) * ( pos_frac.x - Scalar( x ) < 0.5  );
 					int y_inp = y + t.y - Pd2 + 1 - (P % 2) * ( pos_frac.y - Scalar( y ) < 0.5  );
 					int z_inp = z + t.z - Pd2 + 1 - (P % 2) * ( pos_frac.z - Scalar( z ) < 0.5  );
 
+					// Periodic wrapping of grid point
 					x_inp = (x_inp<0) ? x_inp+Nx : ( (x_inp>Nx-1) ? x_inp-Nx : x_inp );
 					y_inp = (y_inp<0) ? y_inp+Ny : ( (y_inp>Ny-1) ? y_inp-Ny : y_inp );
 					z_inp = (z_inp<0) ? z_inp+Nz : ( (z_inp>Nz-1) ? z_inp-Nz : z_inp );
 					
+					// x,y,z coordinates for current thread
 					Scalar3 pos_grid;
 					pos_grid.x = gridh.x*x_inp - Ld2.x;
 					pos_grid.y = gridh.y*y_inp - Ld2.y;
 					pos_grid.z = gridh.z*z_inp - Ld2.z;
 
-					pos_grid.x = pos_grid.x + box.getTiltFactorXY() * pos_grid.y; // shear lattic position
+					// Shear the grid position 
+					// !!! This only works for linear shear where the shear gradient is along y
+					//     and the shear direction is along x
+					pos_grid.x = pos_grid.x + box.getTiltFactorXY() * pos_grid.y;
 					
+					// Global index for current grid point
 					int grid_idx = x_inp * Ny * Nz + y_inp * Nz + z_inp;
 					
 					// Distance from particle to grid node
@@ -240,22 +244,30 @@ void gpu_stokes_Spread_kernel( 	Scalar4 *d_pos,
 					atomicAdd( &(gridX[grid_idx].x), force_inp.x);
 					atomicAdd( &(gridY[grid_idx].x), force_inp.y);
 					atomicAdd( &(gridZ[grid_idx].x), force_inp.z);
-				}
-			}//kk
-		}//jj
-	}//ii
+				}// check thread is within support
+			}// kk
+		}// jj
+	}// ii
 
 }
 
 //! Compute the velocity from the force moments on the grid (Same Size Particles)
+//
+//	This is the operator "B" from the paper
+//
 /*! \param gridX            x-component of force moments projected onto grid
     \param gridY            y-component of force moments projected onto grid
     \param gridZ            z-component of force moments projected onto grid
     \param gridk            wave vector and scaling factor associated with each reciprocal grid node
     \param NxNyNz           total number of grid nodes
 */
-__global__
-void gpu_stokes_Green_kernel(CUFFTCOMPLEX *gridX, CUFFTCOMPLEX *gridY, CUFFTCOMPLEX *gridZ, Scalar4 *gridk, unsigned int NxNyNz) {
+__global__ void gpu_stokes_Green_kernel(
+				CUFFTCOMPLEX *gridX, 
+				CUFFTCOMPLEX *gridY, 
+				CUFFTCOMPLEX *gridZ, 
+				Scalar4 *gridk, 
+				unsigned int NxNyNz
+				) {
 
 	int tid = blockDim.x * blockIdx.x + threadIdx.x;
 	
@@ -277,7 +289,7 @@ void gpu_stokes_Green_kernel(CUFFTCOMPLEX *gridX, CUFFTCOMPLEX *gridY, CUFFTCOMP
 	  // Scaling factor
 	  Scalar B = (tid==0) ? 0.0 : tk.w * ( sinf( k ) / k ) * ( sinf( k ) / k );
 	
-	  //Write the velocity to global memory
+	  // Write the velocity to global memory
 	  gridX[tid] = make_scalar2( ( fX.x - tk.x * kdF.x ) * B, ( fX.y - tk.x * kdF.y ) * B );
 	  gridY[tid] = make_scalar2( ( fY.x - tk.y * kdF.x ) * B, ( fY.y - tk.y * kdF.y ) * B );
 	  gridZ[tid] = make_scalar2( ( fZ.x - tk.z * kdF.x ) * B, ( fZ.y - tk.z * kdF.y ) * B );
@@ -303,10 +315,15 @@ void gpu_stokes_Green_kernel(CUFFTCOMPLEX *gridX, CUFFTCOMPLEX *gridY, CUFFTCOMP
     \param box              array containing box dimensions
     \param P                number of grid nodes in support of spreading Gaussians
     \param gridh            space between grid nodes in each dimension
-    \param d_diameter       array of particle diameters
+    \param prefac	    Spreading function prefactor
+    \param expfac	    Spreading function exponential factor
+
+    One 3-D block of threads is launched per particle (block dimension = PxPxP). Max dimension
+    is 10x10x10 because of shared memory limitations. If P > 10, each thread will do more 
+    than one grid point worth of work. 
 */
-__global__
-void gpu_stokes_Contract_kernel( 	Scalar4 *d_pos,
+__global__ void gpu_stokes_Contract_kernel( 	
+					Scalar4 *d_pos,
 				 	Scalar4 *d_vel,
 				 	CUFFTCOMPLEX *gridX,
 				 	CUFFTCOMPLEX *gridY,
@@ -321,17 +338,24 @@ void gpu_stokes_Contract_kernel( 	Scalar4 *d_pos,
 				 	BoxDim box,
 				 	const int P,
 				 	Scalar3 gridh,
-				 	const Scalar *d_diameter,
 				 	Scalar prefac,
-				 	Scalar expfac ){
+				 	Scalar expfac 
+					){
 
-	extern __shared__ float3 shared[];
+	// Shared memory for particle velocity and position, so that each block
+	// only has to read one
+	extern __shared__ Scalar3 shared[];
 	
-	float3 *velocity = shared;
-	float3 *pos_shared = &shared[blockDim.x*blockDim.y*blockDim.z];
+	Scalar3 *velocity = shared;
+	Scalar3 *pos_shared = &shared[blockDim.x*blockDim.y*blockDim.z];
 	
+	// Particle index within each group (block per particle)
 	int group_idx = blockIdx.x;
+
+	// Thread index within the block (grid point index)
 	int thread_offset = threadIdx.z + threadIdx.y * blockDim.z + threadIdx.x * blockDim.z*blockDim.y;
+
+	// Total number of threads within the block
 	int block_size = blockDim.x * blockDim.y * blockDim.z;
 	
 	// Global particle ID
@@ -363,6 +387,9 @@ void gpu_stokes_Contract_kernel( 	Scalar4 *d_pos,
 	int y = int( pos_frac.y );
 	int z = int( pos_frac.z );
 	
+	// Amount of work needed for each thread to cover support
+	// (Required in case support size is larger than grid dimension,
+	//  but in most cases, should have n.x = n.y = n.z = 1 )
 	int3 n, t;
         n.x = ( P + blockDim.x - 1 ) / blockDim.x; // ceiling
         n.y = ( P + blockDim.y - 1 ) / blockDim.y;
@@ -385,21 +412,30 @@ void gpu_stokes_Contract_kernel( 	Scalar4 *d_pos,
 
 				if( ( t.x < P ) && ( t.y < P ) && ( t.z < P ) ){
 
+					// x,y,z indices for current thread
+					// 
+					// Arithmetic with P makes sure distribution is centered on the particle
 					int x_inp = x + t.x - Pd2 + 1 - (P % 2) * ( pos_frac.x - Scalar( x ) < 0.5  );
 					int y_inp = y + t.y - Pd2 + 1 - (P % 2) * ( pos_frac.y - Scalar( y ) < 0.5  );
 					int z_inp = z + t.z - Pd2 + 1 - (P % 2) * ( pos_frac.z - Scalar( z ) < 0.5  );
 					
+					// Periodic wrapping of grid point
 					x_inp = (x_inp<0) ? x_inp+Nx : ( (x_inp>Nx-1) ? x_inp-Nx : x_inp );
 					y_inp = (y_inp<0) ? y_inp+Ny : ( (y_inp>Ny-1) ? y_inp-Ny : y_inp );
 					z_inp = (z_inp<0) ? z_inp+Nz : ( (z_inp>Nz-1) ? z_inp-Nz : z_inp );
 					
+					// x,y,z coordinates for current thread
 					Scalar3 pos_grid;
 					pos_grid.x = gridh.x*x_inp - Ld2.x;
 					pos_grid.y = gridh.y*y_inp - Ld2.y;
 					pos_grid.z = gridh.z*z_inp - Ld2.z;
 
-					pos_grid.x = pos_grid.x + box.getTiltFactorXY() * pos_grid.y; // shear lattic position
+					// Shear the grid position 
+					// !!! This only works for linear shear where the shear gradient is along y
+					//     and the shear direction is along x
+					pos_grid.x = pos_grid.x + box.getTiltFactorXY() * pos_grid.y;
 					
+					// Global index for current grid point
 					int grid_idx = x_inp * Ny * Nz + y_inp * Nz + z_inp;
 					
 					// Distance from particle to grid node
@@ -417,6 +453,8 @@ void gpu_stokes_Contract_kernel( 	Scalar4 *d_pos,
 		}//jj
 	}//ii
 
+	// Intra-block reduction for the total particle velocity
+	// (add contributions from all grid points)
 	int offs = block_size;
 	int offs_prev; 
 	while (offs > 1)
@@ -431,7 +469,7 @@ void gpu_stokes_Contract_kernel( 	Scalar4 *d_pos,
 	    	
 	}
 	
-	// Combine components of velocity
+	// Write out to global memory
 	if (thread_offset == 0){
 		d_vel[idx] = make_scalar4(velocity[0].x, velocity[0].y, velocity[0].z, d_vel[idx].w);
 	}
@@ -439,7 +477,8 @@ void gpu_stokes_Contract_kernel( 	Scalar4 *d_pos,
 }
 
 /*!
-	Compute wave space part of Mobility ( Same Size Particles )
+	Wrapper to drive all the kernel functions used to compute 
+	the wave space part of Mobility ( Same Size Particles )
 
 */
 /*! \param d_pos            positions of the particles, actually they are fetched on texture memory
@@ -472,32 +511,32 @@ void gpu_stokes_Contract_kernel( 	Scalar4 *d_pos,
     \param gridNBlock       number of blocks
     \param P                number of nodes in support of each gaussian for k-space sum
     \param gridh            distance between grid nodes
-    \param d_diameter       array of particle diameters
 */
-void gpu_stokes_Mwave_wrap( Scalar4 *d_pos,
-                            Scalar4 *d_vel,
-                            Scalar4 *d_net_force,
-			    unsigned int *d_group_members,
-			    unsigned int group_size,
-                            const BoxDim& box,
-			    Scalar xi,
-			    Scalar eta,
-			    Scalar4 *d_gridk,
-			    CUFFTCOMPLEX *d_gridX,
-			    CUFFTCOMPLEX *d_gridY,
-			    CUFFTCOMPLEX *d_gridZ,
-			    cufftHandle plan,
-			    const int Nx,
-			    const int Ny,
-			    const int Nz,
-			    unsigned int NxNyNz,
-			    dim3 grid,
-			    dim3 threads,
-			    int gridBlockSize,
-			    int gridNBlock,
-			    const int P,
-			    Scalar3 gridh,
-			    const Scalar *d_diameter ){
+void gpu_stokes_Mwave_wrap( 
+				Scalar4 *d_pos,
+                        	Scalar4 *d_vel,
+                        	Scalar4 *d_net_force,
+				unsigned int *d_group_members,
+				unsigned int group_size,
+                        	const BoxDim& box,
+				Scalar xi,
+				Scalar eta,
+				Scalar4 *d_gridk,
+				CUFFTCOMPLEX *d_gridX,
+				CUFFTCOMPLEX *d_gridY,
+				CUFFTCOMPLEX *d_gridZ,
+				cufftHandle plan,
+				const int Nx,
+				const int Ny,
+				const int Nz,
+				unsigned int NxNyNz,
+				dim3 grid,
+				dim3 threads,
+				int gridBlockSize,
+				int gridNBlock,
+				const int P,
+				Scalar3 gridh 
+				){
     
 	// Spreading and contraction stuff
 	dim3 Cgrid( group_size, 1, 1);
@@ -515,7 +554,7 @@ void gpu_stokes_Mwave_wrap( Scalar4 *d_pos,
 	gpu_stokes_ZeroGrid_kernel<<<gridNBlock,gridBlockSize>>>(d_gridZ,NxNyNz);
 	
 	// Spread forces onto grid
-	gpu_stokes_Spread_kernel<<<Cgrid, Cthreads>>>( d_pos, d_diameter, d_net_force, d_gridX, d_gridY, d_gridZ, group_size, Nx, Ny, Nz, d_group_members, box, P, gridh, xi, eta, prefac, expfac );
+	gpu_stokes_Spread_kernel<<<Cgrid, Cthreads>>>( d_pos, d_net_force, d_gridX, d_gridY, d_gridZ, group_size, Nx, Ny, Nz, d_group_members, box, P, gridh, xi, eta, prefac, expfac );
 	
 	// Perform FFT on gridded forces
 	cufftExecC2C(plan, d_gridX, d_gridX, CUFFT_FORWARD);
@@ -531,7 +570,7 @@ void gpu_stokes_Mwave_wrap( Scalar4 *d_pos,
 	cufftExecC2C(plan, d_gridZ, d_gridZ, CUFFT_INVERSE);
 	
 	// Evaluate contribution of grid velocities at particle centers
-	gpu_stokes_Contract_kernel<<<Cgrid, Cthreads, (B*B*B+1)*sizeof(float3)>>>( d_pos, d_vel, d_gridX, d_gridY, d_gridZ, group_size, Nx, Ny, Nz, xi, eta, d_group_members, box, P, gridh, d_diameter, quadW*prefac, expfac );
+	gpu_stokes_Contract_kernel<<<Cgrid, Cthreads, (B*B*B+1)*sizeof(float3)>>>( d_pos, d_vel, d_gridX, d_gridY, d_gridZ, group_size, Nx, Ny, Nz, xi, eta, d_group_members, box, P, gridh, quadW*prefac, expfac );
  
 }
 
@@ -549,12 +588,11 @@ void gpu_stokes_Mwave_wrap( Scalar4 *d_pos,
     \param d_group_members  index array to global HOOMD tag on each particle
     \param box              array containing box dimensions
     \param d_n_neigh        list containing number of neighbors for each particle
-    \param d_nlist          list containing neighbors of each particle
-    \param nli              index into nlist
-    \param d_diameter       array of particle diameters
+    \param d_nlist          list containing neighbors of all particles
+    \param d_headlist       list of particle offsets into d_nlist
 */
-__global__
-void gpu_stokes_Mreal_kernel( 	Scalar4 *d_pos,
+__global__ void gpu_stokes_Mreal_kernel( 	
+				Scalar4 *d_pos,
 			      	Scalar4 *d_vel,
 			      	Scalar4 *d_net_force,
 			      	int group_size,
@@ -568,8 +606,8 @@ void gpu_stokes_Mreal_kernel( 	Scalar4 *d_pos,
 			      	BoxDim box,
 			      	const unsigned int *d_n_neigh,
                               	const unsigned int *d_nlist,
-                              	const unsigned int *d_headlist,
-			      	const Scalar *d_diameter) {
+                              	const unsigned int *d_headlist
+				){
  
 	// Index for current thread 
 	int group_idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -593,20 +631,15 @@ void gpu_stokes_Mreal_kernel( 	Scalar4 *d_pos,
 		Scalar4 F = d_net_force[idx];
 		u = make_scalar4( self * F.x, self * F.y, self * F.z, 0.0 );
 		
-		// Calculate contribution to this particle from all neighbors
-		unsigned int cur_j = 0;
-		unsigned int next_j = d_nlist[head_idx];
-		
 		// Minimum and maximum distance for pair calculation
 		Scalar mindistSq = ewald_dr * ewald_dr;
 		Scalar maxdistSq = ewald_cut * ewald_cut;
 		
-		      for (int neigh_idx = 0; neigh_idx < n_neigh; neigh_idx++) {
-		
-			// Statement might be necessary for bug on older architectures?
-			cur_j = next_j;
-			next_j = d_nlist[head_idx + neigh_idx + 1];
-		
+		for (int neigh_idx = 0; neigh_idx < n_neigh; neigh_idx++) {
+
+			// Get index for current neightbor
+			unsigned int cur_j = d_nlist[ head_idx + neigh_idx ];	
+	
 			// Position and size of neighbor particle
 			Scalar4 posj = texFetchScalar4(d_pos, pos_tex, cur_j);
 		
@@ -658,8 +691,6 @@ void gpu_stokes_Mreal_kernel( 	Scalar4 *d_pos,
 /*!
 	Wrap all the functions to compute U = M * F ( SAME SIZE PARTICLES )
 	Drive GPU kernel functions
-	\param d_vel array of particle velocities
-	\param d_net_force array of net forces
 
 	d_vel = M * d_net_force
 
@@ -694,40 +725,39 @@ void gpu_stokes_Mreal_kernel( 	Scalar4 *d_pos,
     \param gridNBlock       number of blocks
     \param P                number of nodes in support of each gaussian for k-space sum
     \param gridh            distance between grid nodes
-    \param d_diameter       array of particle diameters
 */
-void gpu_stokes_Mobility_wrap( Scalar4 *d_pos,
-                               Scalar4 *d_vel,
-                               Scalar4 *d_net_force,
-			       unsigned int *d_group_members,
-			       unsigned int group_size,
-                               const BoxDim& box,
-			       Scalar xi,
-			       Scalar eta,
-			       Scalar ewald_cut,
-			       Scalar ewald_dr,
-			       int ewald_n,
-			       Scalar4 *d_ewaldC1, 
-			       Scalar self,
-			       Scalar4 *d_gridk,
-			       CUFFTCOMPLEX *d_gridX,
-			       CUFFTCOMPLEX *d_gridY,
-			       CUFFTCOMPLEX *d_gridZ,
-			       cufftHandle plan,
-			       const int Nx,
-			       const int Ny,
-			       const int Nz,
-			       const unsigned int *d_n_neigh,
-                               const unsigned int *d_nlist,
-                               const unsigned int *d_headlist,
-			       unsigned int NxNyNz,
-			       dim3 grid,
-			       dim3 threads,
-			       int gridBlockSize,
-			       int gridNBlock,
-			       const int P,
-			       Scalar3 gridh,
-			       const Scalar *d_diameter ){
+void gpu_stokes_Mobility_wrap( 
+				Scalar4 *d_pos,
+				Scalar4 *d_vel,
+				Scalar4 *d_net_force,
+				unsigned int *d_group_members,
+				unsigned int group_size,
+				const BoxDim& box,
+				Scalar xi,
+				Scalar eta,
+				Scalar ewald_cut,
+				Scalar ewald_dr,
+				int ewald_n,
+				Scalar4 *d_ewaldC1, 
+				Scalar self,
+				Scalar4 *d_gridk,
+				CUFFTCOMPLEX *d_gridX,
+				CUFFTCOMPLEX *d_gridY,
+				CUFFTCOMPLEX *d_gridZ,
+				cufftHandle plan,
+				const int Nx,
+				const int Ny,
+				const int Nz,
+				const unsigned int *d_n_neigh,
+				const unsigned int *d_nlist,
+				const unsigned int *d_headlist,
+				unsigned int NxNyNz,
+				dim3 grid,
+				dim3 threads,
+				int gridBlockSize,
+				int gridNBlock,
+				const int P,
+				Scalar3 gridh ){
 
 	// Real and wave space velocity
 	Scalar4 *d_vel1, *d_vel2;
@@ -735,12 +765,12 @@ void gpu_stokes_Mobility_wrap( Scalar4 *d_pos,
 	cudaMalloc( &d_vel2, group_size*sizeof(Scalar4) );
 	
 	// Add the wave space contribution to the velocity
-	gpu_stokes_Mwave_wrap( d_pos, d_vel1, d_net_force, d_group_members, group_size, box, xi, eta, d_gridk, d_gridX, d_gridY, d_gridZ, plan, Nx, Ny, Nz, NxNyNz, grid, threads, gridBlockSize, gridNBlock, P, gridh, d_diameter );
+	gpu_stokes_Mwave_wrap( d_pos, d_vel1, d_net_force, d_group_members, group_size, box, xi, eta, d_gridk, d_gridX, d_gridY, d_gridZ, plan, Nx, Ny, Nz, NxNyNz, grid, threads, gridBlockSize, gridNBlock, P, gridh );
 	
 	// Add the real space contribution to the velocity
 	//
 	// Real space calculation takes care of self contributions
-	gpu_stokes_Mreal_kernel<<<grid, threads>>>(d_pos, d_vel2, d_net_force, group_size, xi, d_ewaldC1, self, ewald_cut, ewald_n, ewald_dr, d_group_members, box, d_n_neigh, d_nlist, d_headlist, d_diameter );
+	gpu_stokes_Mreal_kernel<<<grid, threads>>>(d_pos, d_vel2, d_net_force, group_size, xi, d_ewaldC1, self, ewald_cut, ewald_n, ewald_dr, d_group_members, box, d_n_neigh, d_nlist, d_headlist );
 	
 	// Add real and wave space parts together
 	gpu_stokes_LinearCombination_kernel<<<grid, threads>>>(d_vel1, d_vel2, d_vel, 1.0, 1.0, group_size, d_group_members);

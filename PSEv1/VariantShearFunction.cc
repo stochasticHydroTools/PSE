@@ -11,10 +11,10 @@
 
 #include "VariantShearFunction.h"
 
-#include <boost/python.hpp>
-using namespace boost::python;
+using namespace std;
 
-VariantShearFunction::VariantShearFunction(boost::shared_ptr<ShearFunction> shear_func,
+
+VariantShearFunction::VariantShearFunction(std::shared_ptr<ShearFunction> shear_func,
     unsigned int total_timestep,
     double min_value,
     double max_value) :
@@ -42,9 +42,10 @@ double VariantShearFunction::getValue(unsigned int timestep)
     return wrapValue( m_shear_func -> getStrain(timestep) );
 }
 
-void export_VariantShearFunction()
+void export_VariantShearFunction(pybind11::module& m)
 {
-    class_<VariantShearFunction, boost::shared_ptr<VariantShearFunction>, bases<Variant> >("VariantShearFunction", init< boost::shared_ptr<ShearFunction>, unsigned int, double, double >());
+    pybind11::class_<VariantShearFunction, std::shared_ptr<VariantShearFunction> >(m, "VariantShearFunction", pybind11::base<Variant>())
+    .def(pybind11::init< std::shared_ptr<ShearFunction>, unsigned int, double, double >());
 }
 
 #ifdef WIN32

@@ -47,22 +47,92 @@ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-// Include the defined classes that are to be exported to python
-#include "Stokes.h"
-#include "VariantShearFunction.h"
-#include "ShearFunction.h"
+// Maintainer: joaander
+// Modified by Andrew Fiore
 
-// Include boost.python to do the exporting
-#include <boost/python.hpp>
-using namespace boost::python;
+/*! \file Brownian.cuh
+    \brief Declares GPU kernel codes for Brownian Calculations.
+*/
+#include "hoomd/ParticleData.cuh"
+#include "hoomd/HOOMDMath.h"
+#include "hoomd/Index1D.h"
 
-// specify the python module. Note that the name must expliclty match the PROJECT() name provided in CMakeLists
-// (with an underscore in front)
-BOOST_PYTHON_MODULE(_PSEv1)
-    {
-    #ifdef ENABLE_CUDA
-	export_Stokes();
-    #endif
-    export_VariantShearFunction();
-  export_ShearFunction();
-    }
+#include <cufft.h>
+
+//! Define the kernel
+#ifndef __BROWNIAN_CUH__
+#define __BROWNIAN_CUH__
+
+//! Definition for complex variable storage
+#ifdef SINGLE_PRECISION
+#define CUFFTCOMPLEX cufftComplex
+#else
+#define CUFFTCOMPLEX cufftComplex
+#endif
+
+__global__ void gpu_stokes_BrownianGenerate_kernel(
+				Scalar4 *d_psi,
+				unsigned int group_size,
+				unsigned int *d_group_members,
+				const unsigned int timestep, 
+				const unsigned int seed 
+				);
+
+__global__ void gpu_stokes_BrownianGridGenerate_kernel(  
+					CUFFTCOMPLEX *gridX,
+					CUFFTCOMPLEX *gridY,
+					CUFFTCOMPLEX *gridZ,
+					Scalar4 *gridk,
+				        unsigned int NxNyNz,
+					int Nx,
+					int Ny,
+					int Nz,
+				        const unsigned int timestep, 
+				        const unsigned int seed,
+					Scalar T,
+					Scalar dt,
+					Scalar quadW 
+					);
+
+void gpu_stokes_CombinedMobilityBrownian_wrap( 
+				Scalar4 *d_pos,
+				Scalar4 *d_net_force,
+                                unsigned int *d_group_members,
+                                unsigned int group_size,
+                                const BoxDim& box,
+                                Scalar dt,
+			        Scalar4 *d_vel,
+			        const Scalar T,
+			        const unsigned int timestep,
+			        const unsigned int seed,
+			        Scalar xi,
+				Scalar eta,
+				Scalar P,
+			        Scalar ewald_cut,
+			        Scalar ewald_dr,
+			        int ewald_n,
+			        Scalar4 *d_ewaldC1, 
+			        Scalar4 *d_gridk,
+			        CUFFTCOMPLEX *d_gridX,
+			        CUFFTCOMPLEX *d_gridY,
+			        CUFFTCOMPLEX *d_gridZ,
+			        cufftHandle plan,
+			        const int Nx,
+			        const int Ny,
+			        const int Nz,
+			        const unsigned int *d_n_neigh,
+                                const unsigned int *d_nlist,
+                                const unsigned int *d_headlist,
+			        int& m_Lanczos,
+			        const unsigned int N_total,
+			        unsigned int NxNyNz,
+			        dim3 grid,
+			        dim3 threads,
+			        int gridBlockSize,
+			        int gridNBlock,
+				Scalar3 gridh,
+			        Scalar cheb_error,
+				Scalar self 
+				);
+
+#endif

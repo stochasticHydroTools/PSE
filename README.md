@@ -16,31 +16,46 @@ Donev, and James W. Swan, The Journal of Chemical Physics, **146**,
  - CMakeLists.txt   : main CMake configuration file for the plugin
  - FindHOOMD.cmake  : script to find a HOOMD-Blue installation to link against
  - README           : This file
+ - PSEv1            : Directory containing C++ and CUDA source code that interacts with HOOMD. Also contains python UI level source code that drives the C++ module
  - cppmodule        : Directory containing C++ and CUDA source code that interacts with HOOMD
- - pymodule         : Directory containing python UI level source code that drives the C++ module
  - examples/run.py  : python example to use PSE.
 
 ## Software requirements
 
 The PSE plugin requires the following additional software:
- - HOOMD, compiled with CUDA (tested with version 1.3.2). 
- - CUDA (tested with version 7.5).
+ - HOOMD, compiled with CUDA (tested with version 2.3.3). 
+ - CUDA (tested with version 9.2).
  - LAPACKE (tested with version 3.6.1).
  - CBLAS (tested with version 3.6.1).
 
-## Compilation
+## Software Installation
+
+HOOMD can be installed following the instructions given in the [documentation](http://hoomd-blue.readthedocs.io/en/stable/compiling.html). HOOMD must be compiled with CUDA enabled. It is recommended to use the following cmake command
+```
+cmake ../ -DCMAKE_INSTALL_PREFIX=${SOFTWARE_ROOT}/lib/python -DCMAKE_CXX_FLAGS=-march=native -DCMAKE_C_FLAGS=-march=native -DENABLE_CUDA=ON -DENABLE_MPI=ON
+```
+where `${SOFTWARE_ROOT}` is the path variable specifying the installation location for HOOMD.
+
+LAPACKE and CBLAS can be install manually after downloading the source code from [netlib](http://www.netlib.org/lapacke) and [openblas](https://www.openblas.net) or from repositorities. In Ubuntu, the simplest method is via repository:
+```
+sudo apt-get install liblapack3 liblapack-dev liblapacke liblapacke-dev
+sudo apt-get install libblas3 libblas-dev libopenblas-dev libatlas-base-dev
+```
+
+## Plugin Compilation
 To compile this example plugin, follow steps similar to those in compiling HOOMD-Blue. The process of finding a HOOMD 
 installation to link to will be fully automatic IF you have hoomd_install_dir/bin in your PATH when running cmake.
 
-Note that plugins can only be built against a hoomd build that has been installed via a package or compiled and then
-installed via 'make install'. Plugins can only be built against hoomd when it is built as a shared library.
+Note that plugins can only be built against a HOOMD build that has been installed via a package or compiled and then
+installed via 'make install'. HOOMD must be built with CUDA enabled -DENABLE_CUDA=ON in order for the package to work.
+Plugins can only be built against hoomd when it is built as a shared library.
+
 From the root PSE folder do: 
 
 ```
 $ mkdir plugin_build
 $ cd plugin_build
-$ cmake ../ 
-(follow normal cmake steps)
+$ cmake ../
 $ make -j6
 $ make install
 ```
@@ -49,7 +64,6 @@ If hoomd is not in your PATH, you can specify the root using
 
 `$ cmake -DHOOMD_ROOT=/path/to/hoomd ../`
 
-where `${HOOMD_ROOT}/bin/hoomd` is where the hoomd executable is installed
 You can also provide to `cmake`  the location of `LAPACKE`, `LAPACK`, `CBLAS`,
 `BLAS` and the `python` version with the options
 
@@ -62,42 +76,17 @@ $ cmake -DHOOMD_ROOT=/path/to/hoomd  \
 -DPYTHON_EXECUTABLE=`which python`   \
 ../
 ```
-
+however, these options are unecessary if these libraries have been installed into the standard directories. 
 
 By default, make install will install the plugin into
 
-`${HOOMD_ROOT}/lib/hoomd/python_module/hoomd_plugins/plugin_template`
+`${HOOMD_ROOT}/lib/python/hoomd/PSEv1`
 
 This works if you have `make install`ed hoomd into your home directory. 
 
-If hoomd is installed in a system directory (such as via an rpm or deb package), then you can still use plugins.
-Delete the plugin_build directory and start over. Set the environment
-variable `HOOMD_PLUGINS_DIR` in your `.bash_profile`, as an example
-
-`export HOOMD_PLUGINS_DIR=${HOME}/hoomd_plugins`  
-
-When running cmake, add `-DHOOMD_PLUGINS_DIR=${HOOMD_PLUGINS_DIR}`
-to the options, that is it
-
- `cmake /path/to/plugin_template_cpp
- -DHOOMD_PLUGINS_DIR=${HOOMD_PLUGINS_DIR}`
-
-Now, `make install` will install the plugins into `${HOOMD_PLUGINS_DIR}` and hoomd, when launched, will look there
-for the plugins.
-
-The plugin can now be used in any hoomd script.
-Example of how to use an installed plugin:
-
+### Using the Plugin
+A sample script demonstrating how the plugin is used can be found in examples/run.py. You can
+call this script with the command
 ```
-from hoomd_script import *
-from hoomd_plugins import plugin_template
-init.create_random(N=1000, phi_p=0.20)
-plugin_template.update.example(period=10)
+python3 run.py
 ```
-
-To create a plugin that actually does something useful:
-
- * copy plugin_template_cpp to a new location
- * change the PROJECT() line in CMakeLists.txt to the name of your new plugin. This is the name that it will install to
- * Modify the source in cppmodule and pymodule. The existing files in those directories serve as examples and include
-   many of the details in comments.

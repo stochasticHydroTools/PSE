@@ -56,9 +56,11 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Mobility.cuh"
 #include "Brownian.cuh"
 #include "Helper.cuh"
-#include "saruprngCUDA.h"
+
+#include "hoomd/Saru.h"
+#include "hoomd/TextureTools.h"
+
 #include <stdio.h>
-#include "TextureTools.h"
 
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
@@ -100,9 +102,6 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
     \brief Defines GPU kernel code for integration considering hydrodynamic interactions on the GPU. Used by Stokes.cc.
 */
 
-//! Shared memory array for gpu_stokes_step_one_kernel()
-// extern __shared__ Scalar s_gammas[];
-// We will use diameter dependent gamma in the future.
 
 //! Shared memory array for partial sum of dot product kernel
 extern __shared__ Scalar partial_sum[];
@@ -136,23 +135,24 @@ scalar4_tex_t pos_tex;
     contiguous as possible leading to fewer memory transactions on compute 1.3 hardware and more cache hits on Fermi. (Not sure about this..)
 */
 extern "C" __global__
-void gpu_stokes_step_one_kernel(Scalar4 *d_pos,
-                             Scalar4 *d_vel,
-                             Scalar3 *d_accel,
-                             int3 *d_image,
-                             unsigned int *d_group_members,
-                             unsigned int group_size,
-                             BoxDim box,
-                             Scalar deltaT,
-			     Scalar4 *d_net_force,
-			     Scalar shear_rate)
-    {
+void gpu_stokes_step_one_kernel(
+				Scalar4 *d_pos,
+				Scalar4 *d_vel,
+				Scalar3 *d_accel,
+				int3 *d_image,
+				unsigned int *d_group_members,
+				unsigned int group_size,
+				BoxDim box,
+				Scalar deltaT,
+				Scalar4 *d_net_force,
+				Scalar shear_rate
+				){
 
     // determine which particle this thread works on (MEM TRANSFER: 4 bytes)
     int group_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (group_idx < group_size)
-        {
+    if (group_idx < group_size){
+
         unsigned int idx = d_group_members[group_idx];
 
         // read the particle's posision (MEM TRANSFER: 16 bytes)
@@ -226,52 +226,54 @@ void gpu_stokes_step_one_kernel(Scalar4 *d_pos,
     \param n_cheb             Order of Chebyshev approximation
     \param N_total            total number of particles ( should be same as group_size )
     \param gridh              Spacing between grid ndoes
-    \param d_diameter         diameters of the particles
     \param cheb_recompute     whether to recompute chebyshev approximation
     \param eig_recompute      whether to recompute eigenvalues of matrix approximation
     \param stored_eigenvalue  previous max eigenvalue
     \param cheb_error         error tolerance in chebyshev approximation
 */
-cudaError_t gpu_stokes_step_one(Scalar4 *d_pos,
-                             Scalar4 *d_vel,
-                             Scalar3 *d_accel,
-                             int3 *d_image,
-                             unsigned int *d_group_members,
-                             unsigned int group_size,
-                             const BoxDim& box,
-                             Scalar dt,
-                             unsigned int block_size,
-			     Scalar4 *d_net_force,
-			     const Scalar T,
-			     const unsigned int timestep,
-			     const unsigned int seed,
-			     Scalar xi,
-			     Scalar eta,
-			     Scalar ewald_cut,
-			     Scalar ewald_dr,
-			     int ewald_n,
-		             Scalar4 *d_ewaldC1, 
-			     Scalar self,
-			     Scalar4 *d_gridk,
-			     CUFFTCOMPLEX *d_gridX,
-			     CUFFTCOMPLEX *d_gridY,
-			     CUFFTCOMPLEX *d_gridZ,
-			     cufftHandle plan,
-			     const int Nx,
-			     const int Ny,
-			     const int Nz,
-			     const unsigned int *d_n_neigh,
-                             const unsigned int *d_nlist,
-                             const unsigned int *d_headlist,
-			     int& m_Lanczos,
-			     const unsigned int N_total,
-			     const int P,
-			     Scalar3 gridh,
-			     const Scalar *d_diameter,
-			     Scalar cheb_error,
-			     Scalar shear_rate){
+cudaError_t gpu_stokes_step_one(
+				Scalar4 *d_pos,
+				Scalar4 *d_vel,
+				Scalar3 *d_accel,
+				int3 *d_image,
+				unsigned int *d_group_members,
+				unsigned int group_size,
+				const BoxDim& box,
+				Scalar dt,
+				unsigned int block_size,
+				Scalar4 *d_net_force,
+				const Scalar T,
+				const unsigned int timestep,
+				const unsigned int seed,
+				Scalar xi,
+				Scalar eta,
+				Scalar ewald_cut,
+				Scalar ewald_dr,
+				int ewald_n,
+				Scalar4 *d_ewaldC1, 
+				Scalar self,
+				Scalar4 *d_gridk,
+				CUFFTCOMPLEX *d_gridX,
+				CUFFTCOMPLEX *d_gridY,
+				CUFFTCOMPLEX *d_gridZ,
+				cufftHandle plan,
+				const int Nx,
+				const int Ny,
+				const int Nz,
+				const unsigned int *d_n_neigh,
+				const unsigned int *d_nlist,
+				const unsigned int *d_headlist,
+				int& m_Lanczos,
+				const unsigned int N_total,
+				const int P,
+				Scalar3 gridh,
+				Scalar cheb_error,
+				Scalar shear_rate
+				){
 
+	// Total number of grid points
 	unsigned int NxNyNz = Nx*Ny*Nz;
+
 	// setup the grid to run the kernel
 	// block for particle calculation
 	dim3 grid( (group_size/block_size) + 1, 1, 1);
@@ -281,6 +283,7 @@ cudaError_t gpu_stokes_step_one(Scalar4 *d_pos,
 	int gridBlockSize = ( NxNyNz > block_size ) ? block_size : NxNyNz;
 	int gridNBlock = ( NxNyNz + gridBlockSize - 1 ) / gridBlockSize ; 
 	
+	// Get the textured tables for real space Ewald sum tabulation
 	tables1_tex.normalized = false; // Not normalized
 	tables1_tex.filterMode = cudaFilterModeLinear; // Filter mode: floor of the index
 	// One dimension, Read mode: ElementType(Get what we write)
@@ -294,14 +297,15 @@ cudaError_t gpu_stokes_step_one(Scalar4 *d_pos,
 	// Get sheared grid vectors
     	gpu_stokes_SetGridk_kernel<<<gridNBlock,gridBlockSize>>>(d_gridk,Nx,Ny,Nz,NxNyNz,box,xi,eta);
 
-	// Do Mobility and Brownian Calculations
-	gpu_stokes_CombinedMobilityBrownian_wrap(  	d_pos,
+	// Do Mobility and Brownian Calculations (compute the velocity from the forces)
+	gpu_stokes_CombinedMobilityBrownian_wrap(  	
+							d_pos,
 							d_net_force,
                                 			d_group_members,
                                 			group_size,
                                 			box,
                                 			dt,
-			        			d_vel,
+			        			d_vel, // output
 			        			T,
 			        			timestep,
 			        			seed,
@@ -331,26 +335,26 @@ cudaError_t gpu_stokes_step_one(Scalar4 *d_pos,
 			        			gridBlockSize,
 			        			gridNBlock,
 							gridh,
-			        			d_diameter,
 			        			cheb_error,
 							self );
 
 
-	// DEBUGGING
-	//gpu_stokes_LinearCombination_kernel<<<grid, threads>>>(d_vel, d_vel, d_vel, 0.0, 0.0, group_size, d_group_members);
+	// Use forward Euler integration to move the particles according the velocity
+	// computed from the Mobility and Brownian calculations
+	gpu_stokes_step_one_kernel<<< grid, threads >>>(
+							d_pos, 
+							d_vel, 
+							d_accel, 
+							d_image, 
+							d_group_members, 
+							group_size, 
+							box, 
+							dt, 
+							d_net_force, 
+							shear_rate
+							);
 
-	//Scalar4 *h_vel;
-	//h_vel = (Scalar4 *)malloc( group_size*sizeof(Scalar4) );
-	//cudaMemcpy( h_vel, d_vel, group_size*sizeof(Scalar4), cudaMemcpyDeviceToHost );
-	//Scalar3 vel = make_scalar3( 0.0, 0.0, 0.0 );
-	//for ( unsigned int ii = 0; ii < group_size; ++ii ){
-	//	vel += make_scalar3( h_vel[ii].x, h_vel[ii].y, h_vel[ii].z );
-	//}
-	//vel = vel / Scalar(group_size);
-	//printf("vel: %f %f %f \n", vel.x, vel.y, vel.z );
-
-	// run the kernel to calculate displacement
-	gpu_stokes_step_one_kernel<<< grid, threads >>>(d_pos, d_vel, d_accel, d_image, d_group_members, group_size, box, dt, d_net_force, shear_rate);
+	// Quick error check
 	gpuErrchk(cudaPeekAtLastError());
 	
 	// Cleanup
