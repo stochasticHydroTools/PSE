@@ -51,14 +51,6 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // Modified by Gang Wang
 // Modified by Andrew Fiore
 
-#include "hoomd/hoomd_config.h"
-#include "IntegrationMethodTwoStep.h"
-#include "Variant.h"
-#include <cufft.h>
-
-#include "NeighborList.h"
-#include "ShearFunction.h"
-
 #ifndef SINGLE_PRECISION
 #define CUFFTCOMPLEX cufftComplex
 #else
@@ -72,9 +64,20 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     \brief Declares the Stokes class
 */
 
+#include <hoomd/Variant.h>
+#include <hoomd/md/NeighborList.h>
+#include <hoomd/md/IntegrationMethodTwoStep.h>
+
+#include <cufft.h>
+
+#include "ShearFunction.h"
+
+
 #ifdef NVCC
 #error This header cannot be compiled by nvcc
 #endif
+
+#include <hoomd/extern/pybind/include/pybind11/pybind11.h>
 
 //! Integrates the system forward considering hydrodynamic interactions by GPU
 /*! Implements overdamped integration (one step) through IntegrationMethodTwoStep interface, runs on the GPU
@@ -83,19 +86,21 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 class Stokes : public IntegrationMethodTwoStep
     {
     public:
+
         //! Constructs the integration method and associates it with the system
-        Stokes(boost::shared_ptr<SystemDefinition> sysdef,
-                   boost::shared_ptr<ParticleGroup> group,
-				   boost::shared_ptr<Variant> T,
-				   unsigned int seed,
-				   boost::shared_ptr<NeighborList> nlist,
-				   Scalar xi,
-				   Scalar error);
+        Stokes(	std::shared_ptr<SystemDefinition> sysdef,
+                std::shared_ptr<ParticleGroup> group,
+		std::shared_ptr<Variant> T,
+		unsigned int seed,
+		std::shared_ptr<NeighborList> nlist,
+		Scalar xi,
+		Scalar error);
+
         virtual ~Stokes();
 
         //! Set a new temperature
         /*! \param T new temperature to set */
-        void setT(boost::shared_ptr<Variant> T)
+        void setT(std::shared_ptr<Variant> T)
         {
         	m_T = T;
         }
@@ -110,21 +115,21 @@ class Stokes : public IntegrationMethodTwoStep
         void setParams();
 
 	//! Set the shear rate and shear frequency
-    	void setShear(boost::shared_ptr<ShearFunction> shear_func, Scalar max_strain) {
+    	void setShear(std::shared_ptr<ShearFunction> shear_func, Scalar max_strain) {
       		m_shear_func = shear_func;
       		m_max_strain = max_strain;
   	}
 
     protected:
 
-	boost::shared_ptr<Variant> m_T;   //!< The Temperature of the Stochastic Bath
+	std::shared_ptr<Variant> m_T;   //!< The Temperature of the Stochastic Bath
         unsigned int m_seed;              //!< The seed for the RNG of the Stochastic Bath
 
         cufftHandle plan;       //!< Used for the Fast Fourier Transformations performed on the GPU
 
-        boost::shared_ptr<NeighborList> m_nlist;    //!< The neighborlist to use for the computation
+        std::shared_ptr<NeighborList> m_nlist;    //!< The neighborlist to use for the computation
 
-	boost::shared_ptr<ShearFunction> m_shear_func; //!< mutable shared pointer towards a ShearFunction object
+	std::shared_ptr<ShearFunction> m_shear_func; //!< mutable shared pointer towards a ShearFunction object
 	Scalar m_max_strain; //!< Maximum total strain before box resizing
 
         Scalar m_xi;                   //!< ewald splitting parameter xi
@@ -156,6 +161,6 @@ class Stokes : public IntegrationMethodTwoStep
     };
 
 //! Exports the Stokes class to python
-void export_Stokes();
+void export_Stokes(pybind11::module& m);
 
 #endif

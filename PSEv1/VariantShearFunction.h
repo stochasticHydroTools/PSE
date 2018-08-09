@@ -8,12 +8,13 @@
 #error This header cannot be compiled by nvcc
 #endif
 
+#include <hoomd/extern/pybind/include/pybind11/pybind11.h>
+
 #ifndef __VARIANT_SHEAR_FUNCTION_H__
 #define __VARIANT_SHEAR_FUNCTION_H__
 
 #include <hoomd/Variant.h>
 #include <cmath>
-#include <boost/shared_ptr.hpp>
 #include "ShearFunction.h"
 
 //! Variant class for shear flowfield described by a function
@@ -33,7 +34,7 @@ public:
         \param min_value the minimal value of this Variant
         \param max_value the maximal value of this Variant
     */
-    VariantShearFunction(boost::shared_ptr<ShearFunction> shear_func,
+    VariantShearFunction(std::shared_ptr<ShearFunction> shear_func,
         unsigned int total_timestep,
         double min_value,
         double max_value);
@@ -47,7 +48,7 @@ public:
     }
 
 private:
-    const boost::shared_ptr<ShearFunction> m_shear_func;
+    const std::shared_ptr<ShearFunction> m_shear_func;
     const unsigned int m_total_timestep; //!< the total timestep for the Variant class
     const double m_min_value; //!< minimum value of the output of the Variant class
     const double m_max_value; //!< maximum value of the output of the Variant class
@@ -56,6 +57,6 @@ private:
 };
 
 //! Exports VariantShearFunction class to python
-void export_VariantShearFunction();
+void export_VariantShearFunction(pybind11::module& m);
 
 #endif

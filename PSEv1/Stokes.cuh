@@ -48,20 +48,20 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 // Maintainer: joaander
+// Modified by Gang Wang
 // Modified by Andrew Fiore
 
 /*! \file Stokes.cuh
     \brief Declares GPU kernel code for integration considering hydrodynamic interactions on the GPU. Used by Stokes.
 */
-#include "hoomd/hoomd_config.h"
-#include "ParticleData.cuh"
-#include "HOOMDMath.h"
+#include "hoomd/ParticleData.cuh"
+#include "hoomd/HOOMDMath.h"
+#include "hoomd/Index1D.h"
 #include <cufft.h>
-#include "Index1D.h"
 
 //! Define the step_one kernel
-#ifndef __MOBILITYTIMING_CUH__
-#define __MOBILITYTIMING_CUH__
+#ifndef __STOKES_CUH__
+#define __STOKES_CUH__
 
 //! Definition for comxplex variable storage
 #ifdef SINGLE_PRECISION
@@ -71,39 +71,44 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 
-void gpu_stokes_Mobility_Timing_wrap( Scalar4 *d_pos,
-                               Scalar4 *d_vel,
-                               Scalar4 *d_net_force,
-			       unsigned int *d_group_members,
-			       unsigned int group_size,
-                               const BoxDim& box,
-			       Scalar xi,
-			       Scalar eta,
-			       Scalar ewald_cut,
-			       Scalar ewald_dr,
-			       int ewald_n,
-			       Scalar4 *d_ewaldC1, 
-			       Scalar self, 
-			       Scalar4 *d_gridk,
-			       CUFFTCOMPLEX *d_gridX,
-			       CUFFTCOMPLEX *d_gridY,
-			       CUFFTCOMPLEX *d_gridZ,
-			       cufftHandle plan,
-			       const int Nx,
-			       const int Ny,
-			       const int Nz,
-			       const unsigned int *d_n_neigh,
-                               const unsigned int *d_nlist,
-                               const unsigned int *d_headlist,
-			       unsigned int NxNyNz,
-			       dim3 grid,
-			       dim3 threads,
-			       int gridBlockSize,
-			       int gridNBlock,
-			       const int P,
-			       Scalar3 gridh,
-			       const Scalar *d_diameter );
-
+//! Kernel driver for the first part (no second part) of the Stokes update called by Stokes.cc
+cudaError_t gpu_stokes_step_one(Scalar4 *d_pos,
+                             Scalar4 *d_vel,
+                             Scalar3 *d_accel,
+                             int3 *d_image,
+                             unsigned int *d_group_members,
+                             unsigned int group_size,
+                             const BoxDim& box,
+                             Scalar deltaT,
+                             unsigned int block_size,
+			     Scalar4 *d_net_force,
+			     const Scalar T,
+			     const unsigned int timestep,
+			     const unsigned int seed,
+			     Scalar xi,
+			     Scalar eta,
+			     Scalar ewald_cut,
+			     Scalar ewald_dr,
+		     	     int ewald_n,
+			     Scalar4 *d_ewald1,
+			     Scalar self,
+			     Scalar4 *d_gridk,
+			     CUFFTCOMPLEX *d_gridX,
+			     CUFFTCOMPLEX *d_gridY,
+			     CUFFTCOMPLEX *d_gridZ,
+			     cufftHandle plan,
+			     const int Nx,
+			     const int Ny,
+			     const int Nz,
+			     const unsigned int *d_n_neigh,
+                             const unsigned int *d_nlist,
+                             const unsigned int *d_headlist,
+			     int& m_Lanczos,
+			     const unsigned int N_total,
+			     const int P,
+			     Scalar3 gridh,
+			     Scalar cheb_error,
+			     Scalar current_shear_rate);
 
 
 #endif

@@ -53,9 +53,10 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 #include "Helper.cuh"
-#include "saruprngCUDA.h"
+
+#include "hoomd/TextureTools.h"
+
 #include <stdio.h>
-#include "TextureTools.h"
 
 #ifdef WIN32
 #include <cassert>
@@ -86,13 +87,13 @@ extern __shared__ Scalar partial_sum[];
 __global__
 void gpu_stokes_ZeroGrid_kernel(CUFFTCOMPLEX *grid, unsigned int NxNyNz) {
 
-  unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
- 
-  if ( tid < NxNyNz ) {
-  
-  	grid[tid] = make_scalar2( 0.0, 0.0 );  
-
-  }
+	unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
+	
+	if ( tid < NxNyNz ) {
+	
+		grid[tid] = make_scalar2( 0.0, 0.0 );  
+	
+	}
 }
 
 /*!
@@ -109,8 +110,16 @@ void gpu_stokes_ZeroGrid_kernel(CUFFTCOMPLEX *grid, unsigned int NxNyNz) {
 	\param group_size       length of vectors
 	\param d_group_members  index into vectors
 */
-__global__
-void gpu_stokes_LinearCombination_kernel(Scalar4 *d_a, Scalar4 *d_b, Scalar4 *d_c, Scalar coeff_a, Scalar coeff_b, unsigned int group_size, unsigned int *d_group_members){
+__global__ void gpu_stokes_LinearCombination_kernel(
+						Scalar4 *d_a,
+						Scalar4 *d_b,
+						Scalar4 *d_c,
+						Scalar coeff_a,
+						Scalar coeff_b,
+						unsigned int group_size,
+						unsigned int *d_group_members
+						){
+
 	int group_idx = blockDim.x * blockIdx.x + threadIdx.x;
 	if (group_idx < group_size) {
 		unsigned int idx = d_group_members[group_idx];
@@ -134,8 +143,14 @@ void gpu_stokes_LinearCombination_kernel(Scalar4 *d_a, Scalar4 *d_b, Scalar4 *d_
 	\param group_size       length of vectors a and b
         \param d_group_members  index into vectors
 */
-__global__
-void gpu_stokes_DotStepOne_kernel(Scalar4 *d_a, Scalar4 *d_b, Scalar *dot_sum, unsigned int group_size, unsigned int *d_group_members){
+__global__ void gpu_stokes_DotStepOne_kernel(
+					Scalar4 *d_a, 
+					Scalar4 *d_b, 
+					Scalar *dot_sum, 
+					unsigned int group_size, 
+					unsigned int *d_group_members
+					){
+
 	int group_idx = blockDim.x * blockIdx.x + threadIdx.x;
 	Scalar temp;
 
@@ -186,8 +201,10 @@ void gpu_stokes_DotStepOne_kernel(Scalar4 *d_a, Scalar4 *d_b, Scalar *dot_sum, u
 	\param num_partial_sums  length of dot_sum array
 
 */
-__global__
-void gpu_stokes_DotStepTwo_kernel(Scalar *dot_sum, unsigned int num_partial_sums){
+__global__ void gpu_stokes_DotStepTwo_kernel(
+					Scalar *dot_sum, 
+					unsigned int num_partial_sums
+					){
 
 	partial_sum[threadIdx.x] = 0.0;
 	__syncthreads();
@@ -218,25 +235,6 @@ void gpu_stokes_DotStepTwo_kernel(Scalar *dot_sum, unsigned int num_partial_sums
 
 }
 
-/*!
-	Set vector to a constant value
-	
-	\param d_a   the vector
-	\param a     value to set vector to
-	\param group_size       length of vector
-	\param d_group_members  index into vector
-
-	d_a = a
-*/
-__global__
-void gpu_stokes_SetValue_kernel(Scalar4 *d_a, Scalar3 a, unsigned int group_size, unsigned int *d_group_members){
-	int group_idx = blockDim.x * blockIdx.x + threadIdx.x;
-	if (group_idx < group_size) {
-		unsigned int idx = d_group_members[group_idx];
-
-		d_a[idx] = make_scalar4(a.x, a.y, a.z, d_a[idx].w);
-	}
-}
 
 /*!
 
@@ -250,8 +248,14 @@ void gpu_stokes_SetValue_kernel(Scalar4 *d_a, Scalar3 a, unsigned int group_size
 
 */
 
-__global__
-void gpu_stokes_MatVecMultiply_kernel(Scalar4 *d_A, Scalar *d_x, Scalar4 *d_b, unsigned int group_size, int m){
+__global__ void gpu_stokes_MatVecMultiply_kernel(
+						Scalar4 *d_A, 
+						Scalar *d_x, 
+						Scalar4 *d_b, 
+						unsigned int group_size, 
+						int m
+						){
+
 	int idx = blockDim.x * blockIdx.x + threadIdx.x;
 	if (idx < group_size) {
 
@@ -274,59 +278,21 @@ void gpu_stokes_MatVecMultiply_kernel(Scalar4 *d_A, Scalar *d_x, Scalar4 *d_b, u
 	}
 }
 
-
-/*!
-	Add two grid vectors
-	C = A + B
-
-	\param d_a              input vector, A
-	\param d_b              input vector, B
-	\param d_c              output vector, C
-	\param N                length of vectors
-*/
-__global__
-void gpu_stokes_AddGrids_kernel(CUFFTCOMPLEX *d_a, CUFFTCOMPLEX *d_b, CUFFTCOMPLEX *d_c, unsigned int NxNyNz){
-	int tidx = blockDim.x * blockIdx.x + threadIdx.x;
-	if ( tidx < NxNyNz) {
-		unsigned int idx = tidx;
-		CUFFTCOMPLEX A = d_a[idx];
-		CUFFTCOMPLEX B = d_b[idx];
-		d_c[idx] = make_scalar2(A.x+B.x, A.y+B.y);
-	}
-}
-
-
-/*!
-	Add scale the grid
-	A = s * A
-
-	\param d_a   input vector, A
-	\param s     scale factor
-	\param N     length of vectors
-*/
-__global__
-void gpu_stokes_ScaleGrid_kernel(CUFFTCOMPLEX *d_a, Scalar s, unsigned int NxNyNz){
-	int tidx = blockDim.x * blockIdx.x + threadIdx.x;
-	if ( tidx < NxNyNz) {
-		unsigned int idx = tidx;
-		CUFFTCOMPLEX A = d_a[idx];
-		d_a[idx] = make_scalar2(s*A.x, s*A.y);
-	}
-}
-
 /*!
   Kernel function to calculate position of each grid in reciprocal space: gridk
   */
 __global__
-void gpu_stokes_SetGridk_kernel(Scalar4 *gridk,
+void gpu_stokes_SetGridk_kernel(
+				Scalar4 *gridk,
                                 int Nx,
                                 int Ny,
                                 int Nz,
                                 unsigned int NxNyNz,
                                 BoxDim box,
                                 Scalar xi,
-				Scalar eta)
-{
+				Scalar eta
+				){
+
         int tid = blockDim.x * blockIdx.x + threadIdx.x;
 
         if ( tid < NxNyNz ) {

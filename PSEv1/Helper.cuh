@@ -48,16 +48,16 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 // Maintainer: joaander
-// Modified by Gang Wang
+// Modified by Andrew Fiore
 
-/*! \file Stokes.cuh
-    \brief Declares GPU kernel code for integration considering hydrodynamic interactions on the GPU. Used by Stokes.
+/*! \file Helper.cuh
+    \brief Declares GPU kernel code for helper functions for the Brownian and Mobility calculations.
 */
-#include "hoomd/hoomd_config.h"
-#include "ParticleData.cuh"
-#include "HOOMDMath.h"
+#include "hoomd/ParticleData.cuh"
+#include "hoomd/HOOMDMath.h"
+#include "hoomd/Index1D.h"
+
 #include <cufft.h>
-#include "Index1D.h"
 
 //! Define the step_one kernel
 #ifndef __HELPER_CUH__
@@ -78,13 +78,7 @@ __global__ void gpu_stokes_DotStepOne_kernel(Scalar4 *d_a, Scalar4 *d_b, Scalar 
 
 __global__ void gpu_stokes_DotStepTwo_kernel(Scalar *dot_sum, unsigned int num_partial_sums);
 
-__global__ void gpu_stokes_SetValue_kernel(Scalar4 *d_a, Scalar3 a, unsigned int group_size, unsigned int *d_group_members);
-
 __global__ void gpu_stokes_MatVecMultiply_kernel(Scalar4 *d_A, Scalar *d_x, Scalar4 *d_b, unsigned int group_size, int m);
-
-__global__ void gpu_stokes_AddGrids_kernel(CUFFTCOMPLEX *d_a, CUFFTCOMPLEX *d_b, CUFFTCOMPLEX *d_c, unsigned int NxNyNz);
-
-__global__ void gpu_stokes_ScaleGrid_kernel(CUFFTCOMPLEX *d_a, Scalar s, unsigned int NxNyNz);
 
 __global__ void gpu_stokes_SetGridk_kernel(Scalar4 *gridk, int Nx, int Ny, int Nz, unsigned int NxNyNz, BoxDim box, Scalar xi, Scalar eta);
 

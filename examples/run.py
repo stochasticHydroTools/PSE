@@ -1,57 +1,59 @@
-from hoomd_script import *
-from hoomd_plugins import PSEv1
+import hoomd;
+from hoomd import _hoomd
+from hoomd.md import _md
+import hoomd.PSEv1
+import os;
 import math
-import random
-import os
+hoomd.context.initialize('');
 
-#Simulation parameters
-dt = 1e-4    # time step size
-nsteps = 1E4 # number of time steps
-T=1          # temperature
-radius = 1.0 # particle radius
+# Time stepping information
+dt = 1e-3      # time step
+tf = 1e0       # the final time of the simulation (in units of bare particle diffusion time)
+nrun = tf / dt # number of steps
 
-# Read in system
-# In init.create_random, volume fraction assumes unit diameter, 
-#     but the plugin assumes unit radius, so divide desired 
-#     volume fraction by 8
-phi = 0.10/8.0
-system = init.create_random(N=32000, phi_p=phi, min_dist=0.90)
+# Particle size
+#
+# Changing this won't change the PSE hydrodynamics, which assumes that all particles
+# have radius = 1.0, and ignores HOOMD's size data. However, might be necessary if 
+# hydrodynamic radius is different from other radii needed.
+radius = 1.0
+diameter = 2.0 * radius
 
-# Set radius to 1
-for p in system.particles:
-    p.diameter = 2.0 * radius
+# File output location
+loc = 'Data/'
+if not os.path.isdir( loc ):
+        os.mkdir( loc )
 
-# Output directory
-if ( not os.path.isdir( 'data' ) ):
-    os.mkdir('data')
+# Simple cubic crystal of 1000 particles
+N = 1000;
+L = 64
+n = math.ceil(N ** (1.0/3.0)) # number of particles along 1D
+a = L / n # spacing between particles
 
-# Simulation parameters
-xi = 0.5
-tol = 1E-3
+# Create the box and particles
+hoomd.init.create_lattice(unitcell=hoomd.lattice.sc(a=a),n=n)
 
-# Define the hard sphere potential for stokes simulation
-def hs_potential_stokes(r, rmin, rmax, coeff1, coeff2, coeff3):
-    V = 8.0 * coeff2 / 3.0 * coeff1 * ( 2.0 * coeff2 * math.log( 2.0 * coeff2 / r ) + ( r - 2.0 * coeff2 ) )
-    F = 8.0 * coeff2 / 3.0 * coeff1 / r * ( 2.0 * coeff2 - r )
-    return (V, F)
+# Shear function form, using sinusoidal oscillatory shear as example
+#
+# Options are: none (no shear. default if left unspecified in integrator call)
+#              steady (steady shear)
+#              sine (sinusoidal oscillatory shear)
+#              chirp (chirp frequency sweep)
+function_form = hoomd.PSEv1.shear_function.sine( dt = dt, shear_rate = 1.0, shear_freq = 1.0 )
 
-table_hs_stokes = pair.table(width=1000)
-table_hs_stokes.pair_coeff.set( 'A', 'A', func=hs_potential_stokes, rmin=0.001, rmax=radius+radius, coeff=dict(coeff1=1/dt, coeff2=radius, coeff3=radius ) )
+# Set up PSE integrator
+#
+# Arguments to PSE integrator (default values given in parentheses):
+# 	group -- group of particle to act on (should be all)
+#	seed (1) -- Seed for the random number generator used in Brownian calculations
+#       T (1.0) -- Temperature
+#       xi (0.5) -- Ewald splitting parameter. Changing value will not affect results, only speed.
+#       error (1E-3) -- Calculation error tolerance
+#       function_form (none) -- Functional form for shearing. See above (or source code) for valid options. 
+hoomd.md.integrate.mode_standard(dt=dt)
+pse = hoomd.PSEv1.integrate.PSEv1( group = hoomd.group.all(), seed = 1, T = 1.0, xi = 0.5, error = 1E-3, function_form = function_form )
 
-# Set up integrator
-all =group.all()
-integrate.mode_standard(dt = dt)
+# Run the simulation
+hoomd.run( nrun )
 
-PSEv1.integrate.PSEv1(group=all, seed = 0, T = 1, xi = 0.5, error = 10**(-3.0))
-
-# Trajectory output
-dcd = dump.dcd(filename='data/motion.dcd',period=1000,overwrite=True)
-xml = dump.xml(filename='data/particles',period = 1000)
-
-# Stress output
-compute.thermo(group=all)
-stress = analyze.log(filename = 'data/stress.log', quantities = ['pressure_xx','pressure_yy','pressure_zz','pressure_xy','pressure_yz','pressure_xz'], period=100, header_prefix='#',overwrite=True)
-
-# Run
-run(nsteps)
 
