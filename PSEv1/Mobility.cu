@@ -274,9 +274,13 @@ __global__ void gpu_stokes_Green_kernel(
 	if ( tid < NxNyNz ) {
 	
 	  // Read the FFT force from global memory
-	  Scalar2 fX = gridX[tid];  
-	  Scalar2 fY = gridY[tid];
-	  Scalar2 fZ = gridZ[tid];
+          Scalar2 fX, fY, fZ;
+	  fX.x = gridX[tid].x;  
+	  fX.y = gridX[tid].y;  
+	  fY.x = gridY[tid].x;
+	  fY.y = gridY[tid].y;
+	  fZ.x = gridZ[tid].x;
+	  fZ.y = gridZ[tid].y;
 	
 	  // Current wave-space vector 
 	  Scalar4 tk = gridk[tid];
@@ -290,11 +294,16 @@ __global__ void gpu_stokes_Green_kernel(
 	  Scalar B = (tid==0) ? 0.0 : tk.w * ( sinf( k ) / k ) * ( sinf( k ) / k );
 	
 	  // Write the velocity to global memory
-	  gridX[tid] = make_scalar2( ( fX.x - tk.x * kdF.x ) * B, ( fX.y - tk.x * kdF.y ) * B );
-	  gridY[tid] = make_scalar2( ( fY.x - tk.y * kdF.x ) * B, ( fY.y - tk.y * kdF.y ) * B );
-	  gridZ[tid] = make_scalar2( ( fZ.x - tk.z * kdF.x ) * B, ( fZ.y - tk.z * kdF.y ) * B );
-	
-	
+          Scalar2 gX, gY, gZ;
+	  gX = make_scalar2( ( fX.x - tk.x * kdF.x ) * B, ( fX.y - tk.x * kdF.y ) * B );
+	  gridX[tid].x = gX.x;
+	  gridX[tid].y = gX.y;
+	  gY = make_scalar2( ( fY.x - tk.y * kdF.x ) * B, ( fY.y - tk.y * kdF.y ) * B );
+	  gridY[tid].x = gY.x;
+	  gridY[tid].y = gY.y;
+	  gZ = make_scalar2( ( fZ.x - tk.z * kdF.x ) * B, ( fZ.y - tk.z * kdF.y ) * B );
+	  gridZ[tid].x = gZ.x;
+	  gridZ[tid].y = gZ.y;
 	}
 }
 

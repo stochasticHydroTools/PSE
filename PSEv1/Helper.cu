@@ -91,7 +91,8 @@ void gpu_stokes_ZeroGrid_kernel(CUFFTCOMPLEX *grid, unsigned int NxNyNz) {
 	
 	if ( tid < NxNyNz ) {
 	
-		grid[tid] = make_scalar2( 0.0, 0.0 );  
+		grid[tid].x = 0;
+		grid[tid].y = 0;
 	
 	}
 }
