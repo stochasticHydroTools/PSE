@@ -1,5 +1,0 @@
-/usr/local/hoomd/PSEv1/_PSEv1.cpython-36m-x86_64-linux-gnu.so
-/usr/local/hoomd/PSEv1/__init__.py
-/usr/local/hoomd/PSEv1/integrate.py
-/usr/local/hoomd/PSEv1/shear_function.py
-/usr/local/hoomd/PSEv1/variant.py
