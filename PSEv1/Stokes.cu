@@ -136,17 +136,17 @@ scalar4_tex_t pos_tex;
 */
 extern "C" __global__
 void gpu_stokes_step_one_kernel(
-				Scalar4 *d_pos,
-				Scalar4 *d_vel,
-				Scalar3 *d_accel,
-				int3 *d_image,
-				unsigned int *d_group_members,
-				unsigned int group_size,
-				BoxDim box,
-				Scalar deltaT,
-				Scalar4 *d_net_force,
-				Scalar shear_rate
-				){
+        Scalar4 *d_pos,
+        Scalar4 *d_vel,
+        Scalar3 *d_accel,
+        int3 *d_image,
+        unsigned int *d_group_members,
+        unsigned int group_size,
+        BoxDim box,
+        Scalar deltaT,
+        Scalar4 *d_net_force,
+        Scalar shear_rate
+        ){
 
     // determine which particle this thread works on (MEM TRANSFER: 4 bytes)
     int group_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -161,13 +161,13 @@ void gpu_stokes_step_one_kernel(
 
         // read the particle's velocity and acceleration (MEM TRANSFER: 32 bytes)
         Scalar4 velmass = d_vel[idx];
-	Scalar mass = velmass.w;
+  Scalar mass = velmass.w;
         Scalar3 vel = make_scalar3(velmass.x, velmass.y, velmass.z);
 
-	// Add the shear
+  // Add the shear
         vel.x += shear_rate * pos.y;
 
-	Scalar4 net_force = d_net_force[idx];
+  Scalar4 net_force = d_net_force[idx];
         Scalar3 accel = make_scalar3(net_force.x, net_force.y, net_force.z);
 
         // update the position
@@ -176,7 +176,7 @@ void gpu_stokes_step_one_kernel(
         // FLOPS: 3
         pos += dx;
 
-	accel = accel/mass;
+  accel = accel/mass;
 
         // read in the particle's image (MEM TRANSFER: 16 bytes)
         int3 image = d_image[idx];
@@ -185,7 +185,7 @@ void gpu_stokes_step_one_kernel(
         box.wrap(pos, image);
 
         // write out the results (MEM_TRANSFER: 48 bytes)
-	d_accel[idx] = accel;
+  d_accel[idx] = accel;
         d_pos[idx] = make_scalar4(pos.x, pos.y, pos.z, postype.w);
         d_image[idx] = image;
         }
@@ -216,7 +216,7 @@ void gpu_stokes_step_one_kernel(
     \param d_gridY            y-component of force moment projection onto the grid
     \param d_gridZ            z-component of force moment projection onto the grid
     \param plan cudaFFT       plan
-    \param Nx 		      number of grid nodes in the x-direction
+    \param Nx           number of grid nodes in the x-direction
     \param Ny                 number of grid nodes in the y-direction
     \param Nz                 number of grid nodes in the z-direction
     \param d_n_neigh          Number of neighbors for every particle
@@ -232,134 +232,134 @@ void gpu_stokes_step_one_kernel(
     \param cheb_error         error tolerance in chebyshev approximation
 */
 cudaError_t gpu_stokes_step_one(
-				Scalar4 *d_pos,
-				Scalar4 *d_vel,
-				Scalar3 *d_accel,
-				int3 *d_image,
-				unsigned int *d_group_members,
-				unsigned int group_size,
-				const BoxDim& box,
-				Scalar dt,
-				unsigned int block_size,
-				Scalar4 *d_net_force,
-				const Scalar T,
-				const unsigned int timestep,
-				const unsigned int seed,
-				Scalar xi,
-				Scalar eta,
-				Scalar ewald_cut,
-				Scalar ewald_dr,
-				int ewald_n,
-				Scalar4 *d_ewaldC1, 
-				Scalar self,
-				Scalar4 *d_gridk,
-				CUFFTCOMPLEX *d_gridX,
-				CUFFTCOMPLEX *d_gridY,
-				CUFFTCOMPLEX *d_gridZ,
-				cufftHandle plan,
-				const int Nx,
-				const int Ny,
-				const int Nz,
-				const unsigned int *d_n_neigh,
-				const unsigned int *d_nlist,
-				const unsigned int *d_headlist,
-				int& m_Lanczos,
-				const unsigned int N_total,
-				const int P,
-				Scalar3 gridh,
-				Scalar cheb_error,
-				Scalar shear_rate
-				){
+        Scalar4 *d_pos,
+        Scalar4 *d_vel,
+        Scalar3 *d_accel,
+        int3 *d_image,
+        unsigned int *d_group_members,
+        unsigned int group_size,
+        const BoxDim& box,
+        Scalar dt,
+        unsigned int block_size,
+        Scalar4 *d_net_force,
+        const Scalar T,
+        const unsigned int timestep,
+        const unsigned int seed,
+        Scalar xi,
+        Scalar eta,
+        Scalar ewald_cut,
+        Scalar ewald_dr,
+        int ewald_n,
+        Scalar4 *d_ewaldC1, 
+        Scalar self,
+        Scalar4 *d_gridk,
+        CUFFTCOMPLEX *d_gridX,
+        CUFFTCOMPLEX *d_gridY,
+        CUFFTCOMPLEX *d_gridZ,
+        cufftHandle plan,
+        const int Nx,
+        const int Ny,
+        const int Nz,
+        const unsigned int *d_n_neigh,
+        const unsigned int *d_nlist,
+        const unsigned int *d_headlist,
+        int& m_Lanczos,
+        const unsigned int N_total,
+        const int P,
+        Scalar3 gridh,
+        Scalar cheb_error,
+        Scalar shear_rate
+        ){
 
-	// Total number of grid points
-	unsigned int NxNyNz = Nx*Ny*Nz;
+  // Total number of grid points
+  unsigned int NxNyNz = Nx*Ny*Nz;
 
-	// setup the grid to run the kernel
-	// block for particle calculation
-	dim3 grid( (group_size/block_size) + 1, 1, 1);
-	dim3 threads(block_size, 1, 1);
-	
-	// block for grid calculation
-	int gridBlockSize = ( NxNyNz > block_size ) ? block_size : NxNyNz;
-	int gridNBlock = ( NxNyNz + gridBlockSize - 1 ) / gridBlockSize ; 
-	
-	// Get the textured tables for real space Ewald sum tabulation
-	tables1_tex.normalized = false; // Not normalized
-	tables1_tex.filterMode = cudaFilterModeLinear; // Filter mode: floor of the index
-	// One dimension, Read mode: ElementType(Get what we write)
-	cudaBindTexture(0, tables1_tex, d_ewaldC1, sizeof(Scalar4) * (ewald_n+1)); // This was a bug in former versions!
-	
-	// Same for the positions and forces
-	pos_tex.normalized = false; // Not normalized
-	pos_tex.filterMode = cudaFilterModePoint; // Filter mode: floor of the index
-	cudaBindTexture(0, pos_tex, d_pos, sizeof(Scalar4) * N_total);
+  // setup the grid to run the kernel
+  // block for particle calculation
+  dim3 grid( (group_size/block_size) + 1, 1, 1);
+  dim3 threads(block_size, 1, 1);
+  
+  // block for grid calculation
+  int gridBlockSize = ( NxNyNz > block_size ) ? block_size : NxNyNz;
+  int gridNBlock = ( NxNyNz + gridBlockSize - 1 ) / gridBlockSize ; 
+  
+  // Get the textured tables for real space Ewald sum tabulation
+  tables1_tex.normalized = false; // Not normalized
+  tables1_tex.filterMode = cudaFilterModeLinear; // Filter mode: floor of the index
+  // One dimension, Read mode: ElementType(Get what we write)
+  cudaBindTexture(0, tables1_tex, d_ewaldC1, sizeof(Scalar4) * (ewald_n+1)); // This was a bug in former versions!
+  
+  // Same for the positions and forces
+  pos_tex.normalized = false; // Not normalized
+  pos_tex.filterMode = cudaFilterModePoint; // Filter mode: floor of the index
+  cudaBindTexture(0, pos_tex, d_pos, sizeof(Scalar4) * N_total);
 
-	// Get sheared grid vectors
-    	gpu_stokes_SetGridk_kernel<<<gridNBlock,gridBlockSize>>>(d_gridk,Nx,Ny,Nz,NxNyNz,box,xi,eta);
+  // Get sheared grid vectors
+      gpu_stokes_SetGridk_kernel<<<gridNBlock,gridBlockSize>>>(d_gridk,Nx,Ny,Nz,NxNyNz,box,xi,eta);
 
-	// Do Mobility and Brownian Calculations (compute the velocity from the forces)
-	gpu_stokes_CombinedMobilityBrownian_wrap(  	
-							d_pos,
-							d_net_force,
-                                			d_group_members,
-                                			group_size,
-                                			box,
-                                			dt,
-			        			d_vel, // output
-			        			T,
-			        			timestep,
-			        			seed,
-			        			xi,
-							eta,
-							P,
-			        			ewald_cut,
-			        			ewald_dr,
-			        			ewald_n,
-			        			d_ewaldC1, 
-			        			d_gridk,
-			        			d_gridX,
-			        			d_gridY,
-			        			d_gridZ,
-			        			plan,
-			        			Nx,
-			        			Ny,
-			        			Nz,
-			        			d_n_neigh,
-                                			d_nlist,
-                                			d_headlist,
-			        			m_Lanczos,
-			        			N_total,
-			        			NxNyNz,
-			        			grid,
-			        			threads,
-			        			gridBlockSize,
-			        			gridNBlock,
-							gridh,
-			        			cheb_error,
-							self );
+  // Do Mobility and Brownian Calculations (compute the velocity from the forces)
+  gpu_stokes_CombinedMobilityBrownian_wrap(    
+              d_pos,
+              d_net_force,
+                                      d_group_members,
+                                      group_size,
+                                      box,
+                                      dt,
+                    d_vel, // output
+                    T,
+                    timestep,
+                    seed,
+                    xi,
+              eta,
+              P,
+                    ewald_cut,
+                    ewald_dr,
+                    ewald_n,
+                    d_ewaldC1, 
+                    d_gridk,
+                    d_gridX,
+                    d_gridY,
+                    d_gridZ,
+                    plan,
+                    Nx,
+                    Ny,
+                    Nz,
+                    d_n_neigh,
+                                      d_nlist,
+                                      d_headlist,
+                    m_Lanczos,
+                    N_total,
+                    NxNyNz,
+                    grid,
+                    threads,
+                    gridBlockSize,
+                    gridNBlock,
+              gridh,
+                    cheb_error,
+              self );
 
 
-	// Use forward Euler integration to move the particles according the velocity
-	// computed from the Mobility and Brownian calculations
-	gpu_stokes_step_one_kernel<<< grid, threads >>>(
-							d_pos, 
-							d_vel, 
-							d_accel, 
-							d_image, 
-							d_group_members, 
-							group_size, 
-							box, 
-							dt, 
-							d_net_force, 
-							shear_rate
-							);
+  // Use forward Euler integration to move the particles according the velocity
+  // computed from the Mobility and Brownian calculations
+  gpu_stokes_step_one_kernel<<< grid, threads >>>(
+              d_pos, 
+              d_vel, 
+              d_accel, 
+              d_image, 
+              d_group_members, 
+              group_size, 
+              box, 
+              dt, 
+              d_net_force, 
+              shear_rate
+              );
 
-	// Quick error check
-	gpuErrchk(cudaPeekAtLastError());
-	
-	// Cleanup
-	cudaUnbindTexture(tables1_tex);
-	cudaUnbindTexture(pos_tex);
-	
-	return cudaSuccess;
+  // Quick error check
+  gpuErrchk(cudaPeekAtLastError());
+  
+  // Cleanup
+  cudaUnbindTexture(tables1_tex);
+  cudaUnbindTexture(pos_tex);
+  
+  return cudaSuccess;
 }

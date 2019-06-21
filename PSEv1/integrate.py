@@ -20,9 +20,9 @@ class PSEv1(hoomd.md.integrate._integration_method):
     # \param seed               Random seed to use for the run. Simulations that are identical, except for the seed, will follow
     #                             different trajectories.
     # \param xi                 Ewald splitting parameter
-    # \param error		Relative error for all calculations
-    # \param function_form	Functional form for shear
-    # \param max_strain		Maximum box deformation for shear
+    # \param error    Relative error for all calculations
+    # \param function_form  Functional form for shear
+    # \param max_strain    Maximum box deformation for shear
     #
     #
     # T can be a variant type, allowing for temperature ramps in simulation runs.
@@ -31,7 +31,7 @@ class PSEv1(hoomd.md.integrate._integration_method):
     
     def __init__(self, group, T, seed=0, xi = 0.5, error = 0.001, function_form = None, max_strain = 0.5, nlist_type = "cell" ):
 
-	# Print the status of the initialization        
+  # Print the status of the initialization        
         hoomd.util.print_status_line();
         
         # initialize base class
@@ -52,9 +52,9 @@ class PSEv1(hoomd.md.integrate._integration_method):
             hoomd.context.msg.error("Sorry, we have not written CPU code for PSE RPY simulation. \n");
             raise RuntimeError('Error creating Stokes');
         else:
-	    
-	    # Create a neighborlist exclusively for real space interactions. Use cell lists by 
-	    # default, but also allow the user to specify
+      
+      # Create a neighborlist exclusively for real space interactions. Use cell lists by 
+      # default, but also allow the user to specify
             if ( nlist_type.upper() == "CELL" ):
 
                 cl_stokes = _hoomd.CellListGPU(hoomd.context.current.system_definition);
