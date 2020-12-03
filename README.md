@@ -1,7 +1,10 @@
 # Positively Split Ewald (PSE)
 PSE is a HOOMD plugin by Andrew M. Fiore containing a GPU implemention of the Positively Split Ewald
 (PSE) algorithm for calculation of the Rotne-Prager-Yamakawa (RPY)
-hydrodynamic mobility and stochastic thermal displacements. 
+hydrodynamic mobility and stochastic thermal displacements. This repository is no longer maintained.
+
+An alternative maintained GPU implementation can be found in [UAMMD](https://github.com/RaulPPelaez/UAMMD) and is
+accessible using a simple [python interface](https://github.com/RaulPPelaez/UAMMD_PSE_Python).
  
 The theory behind the PSE method is described in the reference:
 
