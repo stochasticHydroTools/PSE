@@ -13,7 +13,7 @@
 PYBIND11_MODULE(_PSEv1, m)
     {
     #ifdef ENABLE_CUDA
-	export_Stokes(m);
+  export_Stokes(m);
     #endif
     export_ShearFunction(m);
     export_ShearFunctionWrap(m);

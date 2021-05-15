@@ -8,7 +8,7 @@ hoomd.context.initialize('');
 
 # Time stepping information
 dt = 1e-3      # time step
-tf = 1e0       # the final time of the simulation (in units of bare particle diffusion time)
+tf = 10e0       # the final time of the simulation (in units of bare particle diffusion time)
 nrun = tf / dt # number of steps
 
 # Particle size
@@ -25,8 +25,8 @@ if not os.path.isdir( loc ):
         os.mkdir( loc )
 
 # Simple cubic crystal of 1000 particles
-N = 1000;
-L = 64
+N = 6400
+L = 40 
 n = math.ceil(N ** (1.0/3.0)) # number of particles along 1D
 a = L / n # spacing between particles
 

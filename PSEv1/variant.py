@@ -23,7 +23,7 @@ class shear_variant(hoomd.variant._variant):
         # initialize the base class
         _variant.__init__(self)
 
-	# check total_timestep is positive
+  # check total_timestep is positive
         if total_timestep <= 0:
             hoomd.context.msg.error("Cannot create a shear_variant with 0 or negative points\n")
             raise RuntimeError('Error creating variant')
